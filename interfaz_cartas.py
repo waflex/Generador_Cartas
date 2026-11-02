@@ -59,6 +59,10 @@ class Aplicacion:
         self.arbol_dic = None
         self.var_busqueda_dic = None
         self.lbl_dic_conteo = None
+        self.var_dic_campo = tk.StringVar()
+        self.var_dic_abrev = tk.StringVar()
+        self.dic_seleccionado = None
+        self.lbl_dic_estado = None
         app_config.asegurar_config()
 
         base = g.BASE_DIR
@@ -588,8 +592,8 @@ class Aplicacion:
 
         ventana = tk.Toplevel(self.root)
         ventana.title("Diccionario de campos clinicos")
-        ventana.geometry("780x560")
-        ventana.minsize(620, 420)
+        ventana.geometry("980x600")
+        ventana.minsize(860, 520)
         ventana.configure(bg=COLOR_FONDO)
         ventana.transient(self.root)
         ventana.protocol("WM_DELETE_WINDOW", self._cerrar_diccionario)
@@ -628,13 +632,26 @@ class Aplicacion:
         )
         self.lbl_dic_conteo.pack(side="right", padx=(10, 0))
 
-        marco = tk.Frame(ventana, bg=COLOR_FONDO)
-        marco.pack(fill="both", expand=True, padx=18, pady=(0, 10))
-        marco.columnconfigure(0, weight=1)
-        marco.rowconfigure(0, weight=1)
+        cuerpo = tk.Frame(ventana, bg=COLOR_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=18, pady=(0, 8))
+        cuerpo.columnconfigure(0, weight=3)
+        cuerpo.columnconfigure(1, weight=2)
+        cuerpo.rowconfigure(0, weight=1)
+
+        lista = tk.Frame(
+            cuerpo, bg=COLOR_TARJETA, highlightbackground=COLOR_BORDE,
+            highlightthickness=1,
+        )
+        lista.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        lista.columnconfigure(0, weight=1)
+        lista.rowconfigure(1, weight=1)
+        tk.Label(
+            lista, text="Campos configurados", bg=COLOR_TARJETA,
+            fg=COLOR_TEXTO, font=(FUENTE, 11, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 6))
 
         self.arbol_dic = ttk.Treeview(
-            marco, columns=("Campo", "Abreviatura"), show="headings",
+            lista, columns=("Campo", "Abreviatura"), show="headings",
             selectmode="browse",
         )
         self.arbol_dic.heading(
@@ -643,14 +660,63 @@ class Aplicacion:
         self.arbol_dic.heading(
             "Abreviatura", text="Abreviatura", anchor="w"
         )
-        self.arbol_dic.column("Campo", width=560, anchor="w")
-        self.arbol_dic.column("Abreviatura", width=130, anchor="w")
-        self.arbol_dic.grid(row=0, column=0, sticky="nsew")
-        barra = ttk.Scrollbar(
-            marco, orient="vertical", command=self.arbol_dic.yview
+        self.arbol_dic.column("Campo", width=420, anchor="w")
+        self.arbol_dic.column("Abreviatura", width=140, anchor="w")
+        self.arbol_dic.grid(
+            row=1, column=0, sticky="nsew", padx=(14, 0), pady=(0, 14)
         )
-        barra.grid(row=0, column=1, sticky="ns")
+        barra = ttk.Scrollbar(
+            lista, orient="vertical", command=self.arbol_dic.yview
+        )
+        barra.grid(row=1, column=1, sticky="ns", pady=(0, 14))
         self.arbol_dic.configure(yscrollcommand=barra.set)
+        self.arbol_dic.bind(
+            "<<TreeviewSelect>>", self._seleccionar_campo_dic
+        )
+
+        formulario = self._card(
+            cuerpo, "Editar campo", "Los cambios se guardan en config.json.",
+            fila=0, columna=1, padx=(7, 0),
+        )
+        formulario.columnconfigure(0, weight=1)
+        tk.Label(
+            formulario, text="Nombre del campo", bg=COLOR_TARJETA,
+            fg=COLOR_TEXTO, font=(FUENTE, 9, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Entry(
+            formulario, textvariable=self.var_dic_campo,
+        ).grid(row=1, column=0, sticky="ew", pady=(4, 10))
+        tk.Label(
+            formulario, text="Abreviatura", bg=COLOR_TARJETA,
+            fg=COLOR_TEXTO, font=(FUENTE, 9, "bold"),
+        ).grid(row=2, column=0, sticky="w")
+        ttk.Entry(
+            formulario, textvariable=self.var_dic_abrev,
+        ).grid(row=3, column=0, sticky="ew", pady=(4, 10))
+
+        ttk.Button(
+            formulario, text="Agregar", style="Secondary.TButton",
+            command=self._agregar_campo_dic,
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 4))
+        ttk.Button(
+            formulario, text="Guardar cambios", style="Accent.TButton",
+            command=self._actualizar_campo_dic,
+        ).grid(row=5, column=0, sticky="ew", pady=4)
+        ttk.Button(
+            formulario, text="Eliminar", style="Small.TButton",
+            command=self._eliminar_campo_dic,
+        ).grid(row=6, column=0, sticky="ew", pady=4)
+        ttk.Button(
+            formulario, text="Limpiar", style="Ghost.TButton",
+            command=self._limpiar_formulario_dic,
+        ).grid(row=7, column=0, sticky="ew")
+
+        self.lbl_dic_estado = tk.Label(
+            formulario, text="Selecciona un campo o crea uno nuevo.",
+            bg=COLOR_TARJETA, fg=COLOR_TEXTO_SUAVE, font=(FUENTE, 9),
+            wraplength=280, justify="left", anchor="w",
+        )
+        self.lbl_dic_estado.grid(row=8, column=0, sticky="ew", pady=(10, 0))
 
         pie = tk.Frame(ventana, bg=COLOR_FONDO)
         pie.pack(fill="x", padx=18, pady=(0, 14))
@@ -658,15 +724,12 @@ class Aplicacion:
             pie, text="Recargar config.json", style="Small.TButton",
             command=self._recargar_diccionario,
         ).pack(side="left")
-        tk.Label(
-            pie, text="Se edita en config.json", bg=COLOR_FONDO,
-            fg=COLOR_TEXTO_SUAVE, font=(FUENTE, 9),
-        ).pack(side="left", padx=(10, 0))
         ttk.Button(
             pie, text="Cerrar", style="Small.TButton",
             command=self._cerrar_diccionario,
         ).pack(side="right")
 
+        self._limpiar_formulario_dic()
         self._filtrar_diccionario()
 
     def _cerrar_diccionario(self):
@@ -674,6 +737,148 @@ class Aplicacion:
             self.ventana_dic.destroy()
             self.ventana_dic = None
             self.arbol_dic = None
+            self.lbl_dic_estado = None
+            self.dic_seleccionado = None
+
+    def _seleccionar_campo_dic(self, _evento=None):
+        if self.arbol_dic is None:
+            return
+        seleccion = self.arbol_dic.selection()
+        if not seleccion:
+            return
+        valores = self.arbol_dic.item(seleccion[0], "values")
+        if len(valores) < 2:
+            return
+        self.dic_seleccionado = valores[0]
+        self.var_dic_campo.set(valores[0])
+        self.var_dic_abrev.set(valores[1])
+        if self.lbl_dic_estado is not None:
+            self.lbl_dic_estado.config(text=f"Editando: {valores[1]}")
+
+    def _limpiar_formulario_dic(self):
+        self.dic_seleccionado = None
+        self.var_dic_campo.set("")
+        self.var_dic_abrev.set("")
+        if self.arbol_dic is not None and self.arbol_dic.winfo_exists():
+            self.arbol_dic.selection_remove(self.arbol_dic.selection())
+        if self.lbl_dic_estado is not None:
+            self.lbl_dic_estado.config(
+                text="Nuevo campo. Completa nombre y abreviatura."
+            )
+
+    def _datos_formulario_dic(self):
+        campo = self.var_dic_campo.get().strip()
+        abreviatura = self.var_dic_abrev.get().strip()
+        if not campo or not abreviatura:
+            messagebox.showwarning(
+                "Datos incompletos",
+                "Completa el nombre del campo y su abreviatura.",
+            )
+            return None
+        return campo, abreviatura
+
+    def _agregar_campo_dic(self):
+        datos = self._datos_formulario_dic()
+        if not datos:
+            return
+        campo, abreviatura = datos
+        campos = g.CONFIG.setdefault("campos_clinicos", {})
+        for existente in campos:
+            if g.normalizar(existente) == g.normalizar(campo):
+                messagebox.showwarning(
+                    "Campo existente",
+                    "Ya existe un campo con ese nombre. Edita el existente.",
+                )
+                return
+        campos[campo] = abreviatura
+        self.dic_seleccionado = campo
+        if self._guardar_diccionario():
+            if self.lbl_dic_estado is not None:
+                self.lbl_dic_estado.config(text=f"Agregado: {abreviatura}")
+
+    def _actualizar_campo_dic(self):
+        original = self.dic_seleccionado
+        if not original:
+            messagebox.showwarning(
+                "Sin seleccion",
+                "Selecciona un campo de la lista para editarlo.",
+            )
+            return
+        datos = self._datos_formulario_dic()
+        if not datos:
+            return
+        campo, abreviatura = datos
+        campos = g.CONFIG.setdefault("campos_clinicos", {})
+        if g.normalizar(campo) != g.normalizar(original):
+            for existente in campos:
+                if g.normalizar(existente) == g.normalizar(campo):
+                    messagebox.showwarning(
+                        "Campo existente",
+                        "Ya existe un campo con ese nombre.",
+                    )
+                    return
+        if original in campos:
+            del campos[original]
+        campos[campo] = abreviatura
+        self._renombrar_alias_dic(original, campo)
+        self.dic_seleccionado = campo
+        if self._guardar_diccionario():
+            if self.lbl_dic_estado is not None:
+                self.lbl_dic_estado.config(text=f"Guardado: {abreviatura}")
+
+    def _renombrar_alias_dic(self, original, nuevo):
+        alias = g.CONFIG.setdefault("alias_campos", {})
+        for clave in list(alias):
+            if g.normalizar(clave) == g.normalizar(original):
+                valor = alias.pop(clave)
+                if g.normalizar(str(valor)) == g.normalizar(original):
+                    valor = nuevo
+                alias[nuevo] = valor
+        for clave, valor in list(alias.items()):
+            if g.normalizar(str(valor)) == g.normalizar(original):
+                alias[clave] = nuevo
+
+    def _eliminar_campo_dic(self):
+        campo = self.dic_seleccionado
+        if not campo:
+            messagebox.showwarning(
+                "Sin seleccion",
+                "Selecciona un campo de la lista para eliminarlo.",
+            )
+            return
+        if not messagebox.askyesno(
+            "Eliminar campo",
+            f"Se eliminara '{campo}' del diccionario.\n\nDeseas continuar?",
+        ):
+            return
+        campos = g.CONFIG.setdefault("campos_clinicos", {})
+        campos.pop(campo, None)
+        alias = g.CONFIG.setdefault("alias_campos", {})
+        for clave, valor in list(alias.items()):
+            if (
+                g.normalizar(str(valor)) == g.normalizar(campo)
+                or g.normalizar(clave) == g.normalizar(campo)
+            ):
+                del alias[clave]
+        self.dic_seleccionado = None
+        if self._guardar_diccionario():
+            self._limpiar_formulario_dic()
+            if self.lbl_dic_estado is not None:
+                self.lbl_dic_estado.config(text="Campo eliminado.")
+
+    def _guardar_diccionario(self):
+        try:
+            ruta = app_config.guardar_config(g.CONFIG)
+        except Exception as e:
+            messagebox.showerror(
+                "No se pudo guardar el diccionario", str(e)
+            )
+            return False
+        g.recargar_config()
+        self._filtrar_diccionario()
+        self._actualizar_resumen()
+        self.var_estado.set(f"Diccionario guardado en {ruta.name}")
+        return True
 
     def _filtrar_diccionario(self):
         if self.arbol_dic is None or not self.arbol_dic.winfo_exists():
@@ -681,6 +886,7 @@ class Aplicacion:
         consulta = g.normalizar(
             self.var_busqueda_dic.get() if self.var_busqueda_dic else ""
         )
+        objetivo = self.dic_seleccionado
         for item in self.arbol_dic.get_children():
             self.arbol_dic.delete(item)
         filas = sorted(
@@ -694,17 +900,24 @@ class Aplicacion:
                 and consulta not in g.normalizar(abreviatura)
             ):
                 continue
-            self.arbol_dic.insert(
+            item = self.arbol_dic.insert(
                 "", "end", values=(campo, abreviatura)
             )
+            if objetivo and g.normalizar(campo) == g.normalizar(objetivo):
+                self.arbol_dic.selection_set(item)
+                self.arbol_dic.see(item)
             mostrados += 1
         if self.lbl_dic_conteo is not None:
             self.lbl_dic_conteo.config(text=f"{mostrados} campos")
 
     def _recargar_diccionario(self):
         g.recargar_config()
+        self.dic_seleccionado = None
         self._filtrar_diccionario()
+        self._limpiar_formulario_dic()
         self._actualizar_resumen()
+        self.var_estado.set("Diccionario recargado desde config.json")
+
 
     def _construir_archivos(self, padre):
         marco = self._card(
@@ -1172,17 +1385,33 @@ class Aplicacion:
 
         ventana = tk.Toplevel(self.root)
         ventana.title("Revision de grupos y tutores")
-        ventana.geometry("1080x520")
-        ventana.minsize(820, 360)
+        ventana.geometry("1180x520")
+        ventana.minsize(900, 360)
         ventana.configure(bg=COLOR_FONDO)
 
+        con_correo = sum(1 for grupo in grupos if grupo.get("Correo_Tutor"))
+        aviso = (
+            "Alumnos en Para y tutor en CC. Corrige el correo del tutor "
+            "en el tercer Excel y vuelve a revisar."
+        )
+        if catalogo:
+            aviso += (
+                f" Catalogo: {len(catalogo)} tutores. Correo cargado en "
+                f"{con_correo} de {len(grupos)} grupos."
+            )
+            if con_correo < len(grupos):
+                aviso += (
+                    " Los grupos sin coincidencia muestran "
+                    "Origen = Sin coincidencia."
+                )
+        else:
+            aviso += (
+                " No hay catalogo de tutores seleccionado: los correos de "
+                "tutor no se pueden cargar."
+            )
         ttk.Label(
-            ventana,
-            text=(
-                "Alumnos en Para y tutor en CC. Corrige el correo del tutor "
-                "en el tercer Excel y vuelve a revisar."
-            ),
-            style="Card.TLabel",
+            ventana, text=aviso, style="Card.TLabel",
+            wraplength=1000, justify="left",
         ).pack(anchor="w", padx=16, pady=(14, 8))
 
         marco = tk.Frame(ventana, bg=COLOR_FONDO)
@@ -1192,14 +1421,15 @@ class Aplicacion:
 
         columnas = (
             "Rotacion", "Campo", "Alumnos", "Tutor", "Correo_Tutor",
-            "Cartas", "Revisar",
+            "Origen", "Cartas", "Revisar",
         )
         arbol = ttk.Treeview(
             marco, columns=columnas, show="headings", selectmode="browse"
         )
         anchos = {
-            "Rotacion": 70, "Campo": 150, "Alumnos": 260, "Tutor": 150,
-            "Correo_Tutor": 220, "Cartas": 60, "Revisar": 70,
+            "Rotacion": 65, "Campo": 150, "Alumnos": 190, "Tutor": 150,
+            "Correo_Tutor": 330, "Origen": 130, "Cartas": 55,
+            "Revisar": 65,
         }
         for columna in columnas:
             arbol.heading(columna, text=columna)
@@ -1209,15 +1439,30 @@ class Aplicacion:
             marco, orient="vertical", command=arbol.yview
         )
         barra.grid(row=0, column=1, sticky="ns")
-        arbol.configure(yscrollcommand=barra.set)
+        barra_h = ttk.Scrollbar(
+            marco, orient="horizontal", command=arbol.xview
+        )
+        barra_h.grid(row=1, column=0, sticky="ew")
+        arbol.configure(yscrollcommand=barra.set, xscrollcommand=barra_h.set)
 
+        etiquetas_origen = {
+            "columna": "Correo_Tutor",
+            "tutor": "Tutor",
+            "contacto": "Contacto",
+            "tutor+contacto": "Tutor + Contacto",
+        }
+        arbol.tag_configure("sin_correo", foreground="#B91C1C")
         for grupo in grupos:
-            arbol.insert("", "end", values=(
+            origen = grupo.get("Correo_Tutor_Origen", "")
+            etiqueta_origen = etiquetas_origen.get(origen) or "Sin coincidencia"
+            etiquetas = () if grupo.get("Correo_Tutor") else ("sin_correo",)
+            arbol.insert("", "end", tags=etiquetas, values=(
                 grupo.get("Rotacion", ""),
                 grupo.get("Campo_clinico", ""),
                 grupo.get("Alumnos", ""),
                 grupo.get("Tutor", ""),
                 grupo.get("Correo_Tutor", ""),
+                etiqueta_origen,
                 "SI" if grupo.get("Adjuntos_Cartas") else "NO",
                 "SI" if grupo.get("Revisar_Tutor") else "NO",
             ))

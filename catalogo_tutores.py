@@ -49,8 +49,11 @@ def extraer_correos(valor) -> list:
 def limpiar_nombre(valor) -> str:
     """Quita correos y etiquetas para dejar el nombre visible."""
     texto = RE_EMAIL.sub(" ", str(valor or ""))
-    texto = re.sub(r"\b(correo|email|mail|contacto|tutor[a]?)\s*:?\s*", " ", texto, flags=re.IGNORECASE)
-    texto = re.sub(r"[;|/]+", " ", texto)
+    texto = re.sub(
+        r"\b(correo|email|mail|contacto|tutor[a]?)\s*:?\s*", " ", texto,
+        flags=re.IGNORECASE,
+    )
+    texto = re.sub(r"[;|/<>()\[\]{}]+", " ", texto)
     texto = re.sub(r"\s+", " ", texto)
     return texto.strip(" .,-")
 
@@ -140,11 +143,18 @@ def leer_catalogo(path: Path, hoja=None) -> list:
             correos = extraer_correos(correo_columna)
             origen = "columna" if correos else ""
             if not correos:
-                correos = extraer_correos(tutor_texto)
-                origen = "tutor" if correos else ""
-            if not correos:
-                correos = extraer_correos(contacto)
-                origen = "contacto" if correos else ""
+                correos_tutor = extraer_correos(tutor_texto)
+                correos_contacto = extraer_correos(contacto)
+                correos = []
+                for correo in correos_tutor + correos_contacto:
+                    if correo.lower() not in [c.lower() for c in correos]:
+                        correos.append(correo)
+                if correos_tutor and correos_contacto:
+                    origen = "tutor+contacto"
+                elif correos_tutor:
+                    origen = "tutor"
+                elif correos_contacto:
+                    origen = "contacto"
 
             if not tutor:
                 tutor = contacto_nombre
