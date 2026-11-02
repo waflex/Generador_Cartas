@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "backend": "json",
+  "campos_clinicos": {
+    "Músculo esquelético CEDAM LA SERENA": "CEDAM LA SERENA",
+    "Músculo esquelético-MÁSKINE Tutor Francisco Ordenes": "MÁSKINE",
+    "Cardio-Respi Residencia la Araucaria": "La Araucaria",
+    "Neurokinésica María Ávila": "María Ávila",
+    "Neurokinesica-SIR ROA Tutor Patricio Rodriguez": "SIR ROA",
+    "CASA DE REPOSO SIR ROA": "SIR ROA"
+  },
+  "alias_campos": {
+    "Músculo esquelético CEDAM LA SERENA (Tutor David Araya)": "Músculo esquelético CEDAM LA SERENA",
+    "Cardio-Respi Residencia la Araucaria (Turor Sergio Aguirre)": "Cardio-Respi Residencia la Araucaria",
+    "Neurokinésica María Ávila (tutor Natanael Olcese)": "Neurokinésica María Ávila",
+    "Neurokinesica-SIR ROA Tutor Patricio Rodriguez (Lunes-Martes y Miércoles)": "Neurokinesica-SIR ROA Tutor Patricio Rodriguez"
+  },
+  "outlook": {
+    "modo": "grupo_presentacion_recordatorio",
+    "usar_cco": false,
+    "cc_tutor": true,
+    "hora_ingreso": "09:00"
+  },
+  "recordatorio": {
+    "habilitado": true,
+    "hora_ingreso": "09:00"
+  },
+  "correo_tutor_overrides": {}
+}
