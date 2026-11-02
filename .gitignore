@@ -1,2 +1,42 @@
+# Datos locales
 *.xlsx
+
+# Documentos de Office
 *.docx
+
+# Plantillas necesarias para ejecutar y empaquetar
+!carta_template.docx
+!Correo_Template.docx
+!Estimada Estudiante recordatorio.docx
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# Empaquetado
+build/
+dist/
+*.egg-info/
+
+# Salidas generadas
+cartas_output/
+
+# Temporales de Office
+~$*
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
