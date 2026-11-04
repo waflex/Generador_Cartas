@@ -59,6 +59,46 @@ Flujo recomendado en la interfaz:
 Los borradores se guardan en Outlook; la aplicacion no envia correos
 automaticamente.
 
+## Base de datos local
+
+La aplicacion puede trabajar directamente con los Excel o con una base
+SQLite local. La base se guarda por defecto en:
+
+```text
+data/cruce_correos.db
+```
+
+El boton `Base de datos` de la barra superior permite:
+
+- Importar el listado de alumnos.
+- Importar la planilla de rotaciones, indicando el periodo academico.
+- Importar el catalogo de centros y tutores.
+- Importar los tres archivos en una sola operacion.
+- Activar la base como fuente de datos.
+- Crear respaldos en `data/backups/`.
+- Exportar las tablas principales a Excel.
+- Revisar el historial de importaciones.
+
+Cada rotacion guarda fecha de inicio, fecha de termino y el texto original.
+La planilla de correos agrega las columnas `Fecha_Inicio` y `Fecha_Termino`,
+manteniendo `fecha_rotacion` para compatibilidad.
+
+La importacion es idempotente: volver a importar el mismo archivo actualiza
+los registros existentes y no duplica alumnos, rotaciones ni asignaciones. Si
+un alumno de la planilla no existe en el listado, se crea un registro
+pendiente y se informa en las incidencias de la importacion.
+
+### Flujo con base de datos
+
+1. Abrir `Base de datos`.
+2. Usar `Importar todo` con los archivos ya seleccionados, o importar cada
+   archivo por separado.
+3. Indicar el periodo de las rotaciones, por ejemplo `2026-S2`.
+4. Marcar `Usar la base de datos como fuente de datos`.
+5. Revisar y generar las cartas, la planilla y los borradores como siempre.
+
+Tambien se puede volver al modo Excel desmarcando la misma opcion.
+
 ## Archivos de entrada
 
 - Listado de alumnos: Excel con RUT, nombre y correo institucional.
@@ -84,13 +124,17 @@ plantillas Word necesarias para ejecutar y empaquetar si se versionan.
 
 La configuracion se guarda en `config.json`:
 
+- `data_source`: fuente activa, `excel` o `db`.
+- `database`: motor y ruta de la base de datos.
 - `campos_clinicos`: nombres completos y abreviaturas de campos clinicos.
 - `alias_campos`: equivalencias entre nombres de campos.
 - `outlook`: modo de borradores, uso de CCO y copia al tutor.
 - `recordatorio`: plantilla y hora de ingreso.
 
 El diccionario de campos clinicos tambien se puede editar desde el boton
-`Diccionario` de la interfaz.
+`Diccionario` de la interfaz. La ruta de la base de datos se puede cambiar
+manualmente en `database.path`; si es relativa, se resuelve desde la carpeta
+de la aplicacion.
 
 ## Uso por linea de comandos
 
@@ -113,6 +157,16 @@ Opciones utiles:
 - `--planilla-salida`: cambia la ruta del Excel de salida.
 - `--adjuntos-comunes`: agrega archivos comunes a los correos.
 
+## Pruebas
+
+```bat
+python -m unittest discover -s tests -v
+```
+
+Las pruebas cubren el parseo de rangos de fechas, la importacion a SQLite,
+la idempotencia y la equivalencia entre los datos leidos desde Excel y desde
+la base de datos.
+
 ## Empaquetado
 
 ```bat
@@ -121,7 +175,9 @@ pyinstaller GeneradorCartas.spec
 ```
 
 El ejecutable queda en `dist/GeneradorCartas/`. Las carpetas `build/`,
-`dist/`, `cartas_output/` y `__pycache__/` son generadas y no se versionan.
+`dist/`, `cartas_output/`, `data/` y `__pycache__/` son generadas y no se
+versionan. La base de datos se crea al iniciar la aplicacion; si se elimina
+la carpeta `dist/`, conviene restaurar la base desde `data/backups/`.
 
 ## Estructura del proyecto
 
@@ -130,6 +186,9 @@ El ejecutable queda en `dist/GeneradorCartas/`. Las carpetas `build/`,
 - `planilla_correos.py`: planilla Excel y borradores de Outlook.
 - `catalogo_tutores.py`: lectura y busqueda de tutores.
 - `config.py`: carga y guardado de `config.json`.
+- `datos/`: esquema, migraciones, importadores y repositorio SQLite.
+- `data/`: base de datos local y respaldos.
+- `tests/`: pruebas automatizadas.
 - `GeneradorCartas.spec`: configuracion de PyInstaller.
 - `requirements.txt`: dependencias de ejecucion.
 - `requirements-dev.txt`: dependencias de desarrollo y empaquetado.

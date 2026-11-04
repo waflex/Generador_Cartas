@@ -1,6 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "backend": "json",
+  "data_source": "excel",
+  "database": {
+    "engine": "sqlite",
+    "path": "data/cruce_correos.db"
+  },
   "campos_clinicos": {
     "Músculo esquelético CEDAM LA SERENA": "CEDAM LA SERENA",
     "Músculo esquelético-MÁSKINE Tutor Francisco Ordenes": "MÁSKINE",

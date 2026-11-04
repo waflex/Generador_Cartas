@@ -24,13 +24,14 @@ import io
 import re
 import sys
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import openpyxl
 from docx import Document
 
 import config as app_config
+from datos.fechas import parsear_rango_fechas
 
 # ---------------------------------------------------------------------------
 # RUTAS POR DEFECTO - junto al exe/script o dentro del paquete
@@ -388,10 +389,38 @@ def es_campo_clinico(val) -> bool:
     return True
 
 
+def _tiene_fecha(valor) -> bool:
+    if isinstance(valor, (date, datetime)):
+        return True
+    return bool(re.search(
+        r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})\b",
+        str(valor or ""),
+    ))
+
+
+def _mapa_celdas_combinadas(ws) -> dict:
+    mapa = {}
+    for rango in ws.merged_cells.ranges:
+        valor = ws.cell(rango.min_row, rango.min_col).value
+        for fila in range(rango.min_row, rango.max_row + 1):
+            for columna in range(rango.min_col, rango.max_col + 1):
+                mapa[(fila, columna)] = valor
+    return mapa
+
+
 def parsear_grilla(path: Path, hoja=None) -> dict:
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = elegir_hoja(wb, hoja)
     rows = list(ws.iter_rows(values_only=True))
+    combinadas = _mapa_celdas_combinadas(ws)
+
+    def valor_celda(fila, columna):
+        valor = combinadas.get((fila + 1, columna + 1), None)
+        if valor is not None:
+            return valor
+        if fila < len(rows) and columna < len(rows[fila]):
+            return rows[fila][columna]
+        return None
 
     seccion_rows = []
     for i, row in enumerate(rows):
@@ -404,19 +433,33 @@ def parsear_grilla(path: Path, hoja=None) -> dict:
         raise ValueError("No se encontraron cabeceras R1..R15 en la planilla de rotaciones")
 
     col_map_global = max(seccion_rows, key=lambda x: len(x[1]))[1]
-    resultado = {rot: {"fecha_str": "", "campos": {}} for rot in col_map_global.values()}
+    resultado = {
+        rot: {
+            "fecha_str": "",
+            "fecha_inicio": "",
+            "fecha_fin": "",
+            "campos": {},
+        }
+        for rot in col_map_global.values()
+    }
 
     for sec_idx, (header_i, col_map) in enumerate(seccion_rows):
-        for j in range(header_i + 1, min(header_i + 3, len(rows))):
-            n = sum(
-                1 for v in rows[j]
-                if v and isinstance(v, str) and re.search(r"\d{2}-\d{2}-\d{4}", str(v))
-            )
-            if n >= 3:
+        umbral = max(2, len(col_map) // 2)
+        for j in range(header_i + 1, min(header_i + 4, len(rows))):
+            n = sum(1 for ci in col_map if _tiene_fecha(valor_celda(j, ci)))
+            if n >= umbral:
                 for ci, rot in col_map.items():
-                    val = rows[j][ci] if ci < len(rows[j]) else None
-                    if val and isinstance(val, str) and rot in resultado and not resultado[rot]["fecha_str"]:
-                        resultado[rot]["fecha_str"] = re.sub(r"\(.*?\)", "", str(val)).strip()
+                    val = valor_celda(j, ci)
+                    if val is None or not rot in resultado:
+                        continue
+                    if resultado[rot]["fecha_str"]:
+                        continue
+                    rango = parsear_rango_fechas(val)
+                    resultado[rot]["fecha_str"] = re.sub(
+                        r"\(.*?\)", "", rango["fecha_texto_normalizado"]
+                    ).strip()
+                    resultado[rot]["fecha_inicio"] = rango["fecha_inicio"]
+                    resultado[rot]["fecha_fin"] = rango["fecha_fin"]
                 break
 
         fin_sec = seccion_rows[sec_idx + 1][0] if sec_idx + 1 < len(seccion_rows) else len(rows)
@@ -435,7 +478,12 @@ def parsear_grilla(path: Path, hoja=None) -> dict:
                 if es_nombre_alumno(val):
                     nombre = str(val).strip()
                     if rot not in resultado:
-                        resultado[rot] = {"fecha_str": "", "campos": {}}
+                        resultado[rot] = {
+                            "fecha_str": "",
+                            "fecha_inicio": "",
+                            "fecha_fin": "",
+                            "campos": {},
+                        }
                     resultado[rot]["campos"].setdefault(campo_actual, [])
                     if nombre not in resultado[rot]["campos"][campo_actual]:
                         resultado[rot]["campos"][campo_actual].append(nombre)

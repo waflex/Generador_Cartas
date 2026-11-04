@@ -267,6 +267,8 @@ def construir_datos(grilla, maestro, rotaciones, output_base, carrera,
             continue
 
         fecha_str = info["fecha_str"]
+        fecha_inicio = info.get("fecha_inicio", "")
+        fecha_fin = info.get("fecha_fin", "")
         largo, corto, dia = fecha_ingreso(fecha_str)
         fecha_texto = g.fecha_larga(fecha_str) or largo
         campos_info = []
@@ -382,6 +384,8 @@ def construir_datos(grilla, maestro, rotaciones, output_base, carrera,
                 "dia_ingreso": dia,
                 "Rotacion": rotacion,
                 "fecha_rotacion": fecha_str,
+                "Fecha_Inicio": fecha_inicio,
+                "Fecha_Termino": fecha_fin,
                 "Campo_clinico": campo_corto,
                 "Campo_clinico_Original": campo,
                 "Alumnos": alumnos_texto,
@@ -426,6 +430,8 @@ def construir_datos(grilla, maestro, rotaciones, output_base, carrera,
                 filas_alumnos.append({
                     "Rotacion": rotacion,
                     "fecha_rotacion": fecha_str,
+                    "Fecha_Inicio": fecha_inicio,
+                    "Fecha_Termino": fecha_fin,
                     "fecha_ingreso": fecha_texto,
                     "carrera": carrera,
                     "Tipo_Practica": tipo_practica,
@@ -478,6 +484,8 @@ def construir_datos(grilla, maestro, rotaciones, output_base, carrera,
             "dia_ingreso": dia,
             "Rotacion": rotacion,
             "fecha_rotacion": fecha_str,
+            "Fecha_Inicio": fecha_inicio,
+            "Fecha_Termino": fecha_fin,
             "Campo_clinico": "\n".join(item["campo"] for item in campos_info),
             "Alumnos_rotacion": "\n".join(alumnos_rotacion),
             "Correos": "; ".join(correos_rotacion),
@@ -577,7 +585,8 @@ def exportar_planilla(grilla, maestro, rotaciones, output_base: Path,
     ws.title = "Correspondencia"
     encabezados_rotacion = [
         "carrera", "fecha_ingreso", "fecha_ingreso_corta", "dia_ingreso",
-        "Rotacion", "fecha_rotacion", "Campo_clinico", "Alumnos_rotacion",
+        "Rotacion", "fecha_rotacion", "Fecha_Inicio", "Fecha_Termino",
+        "Campo_clinico", "Alumnos_rotacion",
         "Correos", "Asunto", "Adjuntos_Cartas", "Adjuntos_Comunes",
         "Total_Campos", "Total_Grupos", "Total_Alumnos", "Total_Cartas",
     ]
@@ -597,6 +606,7 @@ def exportar_planilla(grilla, maestro, rotaciones, output_base: Path,
     ws_grupos = libro.create_sheet("Correspondencia_Grupos")
     encabezados_grupos = [
         "carrera", "Tipo_Practica", "Area", "Rotacion", "fecha_rotacion",
+        "Fecha_Inicio", "Fecha_Termino",
         "fecha_ingreso", "fecha_ingreso_corta", "dia_ingreso",
         "Campo_clinico", "Campo_clinico_Original", "Alumnos",
         "Lista_Alumnos", "Correos", "Tutor", "Correo_Tutor",
@@ -611,7 +621,8 @@ def exportar_planilla(grilla, maestro, rotaciones, output_base: Path,
 
     ws_detalle = libro.create_sheet("Detalle_Alumnos")
     encabezados_alumnos = [
-        "Rotacion", "fecha_rotacion", "fecha_ingreso", "carrera",
+        "Rotacion", "fecha_rotacion", "Fecha_Inicio", "Fecha_Termino",
+        "fecha_ingreso", "carrera",
         "Tipo_Practica", "Area_Campo", "Campo_clinico",
         "Campo_clinico_Original", "Alumnos_rotacion", "Nombre", "RUT",
         "Area", "Tipo", "Tutor", "Correo_Tutor",
@@ -719,6 +730,8 @@ def _valores_correo(fila: dict) -> dict:
         "dia_ingreso": fila.get("dia_ingreso", ""),
         "Rotacion": fila.get("Rotacion", ""),
         "fecha_rotacion": fila.get("fecha_rotacion", ""),
+        "Fecha_Inicio": fila.get("Fecha_Inicio", ""),
+        "Fecha_Termino": fila.get("Fecha_Termino", ""),
         "Campo_clinico": campo,
         "Campo_Clinico": campo,
         "Campo_clinico_Original": fila.get("Campo_clinico_Original", ""),

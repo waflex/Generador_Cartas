@@ -16,12 +16,13 @@ import queue
 import threading
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import config as app_config
 import catalogo_tutores as ct
 import generar_cartas as g
 import planilla_correos as pc
+from datos.repositorio import Repositorio
 
 COLOR_FONDO = "#F4F6FA"
 COLOR_TARJETA = "#FFFFFF"
@@ -56,6 +57,7 @@ class Aplicacion:
         self.pasos = []
         self.ventana_config = None
         self.ventana_dic = None
+        self.ventana_bd = None
         self.arbol_dic = None
         self.var_busqueda_dic = None
         self.lbl_dic_conteo = None
@@ -64,6 +66,19 @@ class Aplicacion:
         self.dic_seleccionado = None
         self.lbl_dic_estado = None
         app_config.asegurar_config()
+        self.config = app_config.cargar_config()
+        self.var_fuente = tk.StringVar(
+            value=str(self.config.get("data_source", "excel")).lower()
+        )
+        self.var_periodo = tk.StringVar()
+        self.var_bd_info = tk.StringVar(value="")
+        self.var_bd_usar = tk.BooleanVar(value=self.var_fuente.get() == "db")
+        self.repo = None
+        self.repo_error = ""
+        try:
+            self.repo = Repositorio(self.config)
+        except Exception as e:
+            self.repo_error = str(e)
 
         base = g.BASE_DIR
         self.var_lista = tk.StringVar()
@@ -443,6 +458,10 @@ class Aplicacion:
         acciones = tk.Frame(cabecera, bg=COLOR_FONDO)
         acciones.grid(row=0, column=1, rowspan=2, sticky="e")
         ttk.Button(
+            acciones, text="Base de datos", style="Small.TButton",
+            command=self._abrir_base_datos,
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
             acciones, text="Diccionario", style="Small.TButton",
             command=self._abrir_diccionario,
         ).pack(side="left", padx=(0, 8))
@@ -494,11 +513,33 @@ class Aplicacion:
         self.notebook.bind("<<NotebookTabChanged>>", self._cambiar_paso)
         self._cambiar_paso()
 
+    def _usar_bd(self):
+        return self.var_fuente.get() == "db" and self.repo is not None
+
     def _resumen_cambiado(self, *_args):
         self._actualizar_resumen()
 
     def _actualizar_resumen(self):
         if not hasattr(self, "lbl_resumen"):
+            return
+        if self._usar_bd():
+            partes = ["Fuente: Base de datos"]
+            if self.repo is not None:
+                partes.append(f"BD: {Path(self.repo.path).name}")
+                periodo = self.var_periodo.get().strip()
+                if periodo:
+                    partes.append(f"Periodo: {periodo}")
+            elif self.repo_error:
+                partes.append(f"Error BD: {self.repo_error}")
+            plantilla = self.var_plantilla.get().strip()
+            partes.append(
+                "Cartas: " + (Path(plantilla).name if plantilla else "sin definir")
+            )
+            salida = self.var_salida.get().strip()
+            partes.append("Salida: " + (salida if salida else "sin definir"))
+            if self.rutas_comunes:
+                partes.append(f"Adjuntos: {len(self.rutas_comunes)}")
+            self.var_resumen.set("   |   ".join(partes))
             return
         partes = []
         for etiqueta, var_ruta, var_hoja in (
@@ -582,6 +623,302 @@ class Aplicacion:
             self.ventana_config.withdraw()
         self._actualizar_resumen()
         self._cambiar_paso()
+
+    # ------------------------------------------------------------------
+    # BASE DE DATOS
+    # ------------------------------------------------------------------
+    def _abrir_base_datos(self):
+        if self.ventana_bd is not None and self.ventana_bd.winfo_exists():
+            self._refrescar_bd()
+            self.ventana_bd.deiconify()
+            self.ventana_bd.lift()
+            self.ventana_bd.focus_force()
+            return
+
+        ventana = tk.Toplevel(self.root)
+        ventana.title("Base de datos")
+        ventana.geometry("860x560")
+        ventana.minsize(760, 480)
+        ventana.configure(bg=COLOR_FONDO)
+        ventana.transient(self.root)
+        ventana.protocol("WM_DELETE_WINDOW", self._cerrar_bd)
+        self.ventana_bd = ventana
+
+        cabecera = tk.Frame(ventana, bg=COLOR_FONDO)
+        cabecera.pack(fill="x", padx=20, pady=(18, 8))
+        tk.Label(
+            cabecera, text="Base de datos", bg=COLOR_FONDO, fg=COLOR_TEXTO,
+            font=(FUENTE, 16, "bold"),
+        ).pack(side="left")
+        ttk.Button(
+            cabecera, text="Cerrar", style="Small.TButton",
+            command=self._cerrar_bd,
+        ).pack(side="right")
+
+        estado = tk.Frame(
+            ventana, bg=COLOR_TARJETA, highlightbackground=COLOR_BORDE,
+            highlightthickness=1,
+        )
+        estado.pack(fill="x", padx=20, pady=(0, 12))
+        tk.Label(
+            estado, textvariable=self.var_bd_info, bg=COLOR_TARJETA,
+            fg=COLOR_TEXTO, font=(FUENTE, 9), justify="left", anchor="w",
+            wraplength=780, padx=12, pady=10,
+        ).pack(fill="x")
+        ttk.Checkbutton(
+            estado, text="Usar la base de datos como fuente de datos",
+            variable=self.var_bd_usar, command=self._cambiar_fuente,
+        ).pack(anchor="w", padx=12, pady=(0, 10))
+
+        acciones = tk.Frame(ventana, bg=COLOR_FONDO)
+        acciones.pack(fill="x", padx=20, pady=(0, 12))
+        botones = (
+            ("Importar todo", lambda: self._importar_bd("todo"), "Accent.TButton"),
+            ("Importar alumnos", lambda: self._importar_bd("alumnos"), "Secondary.TButton"),
+            ("Importar rotaciones", lambda: self._importar_bd("rotaciones"), "Secondary.TButton"),
+            ("Importar centros/tutores", lambda: self._importar_bd("catalogo"), "Secondary.TButton"),
+        )
+        for indice, (texto, comando, estilo) in enumerate(botones):
+            ttk.Button(
+                acciones, text=texto, style=estilo, command=comando
+            ).grid(row=indice // 2, column=indice % 2, sticky="ew", padx=(0, 8), pady=4)
+        acciones.columnconfigure(0, weight=1)
+        acciones.columnconfigure(1, weight=1)
+
+        utilidades = tk.Frame(ventana, bg=COLOR_FONDO)
+        utilidades.pack(fill="x", padx=20, pady=(0, 12))
+        for indice, (texto, comando) in enumerate((
+            ("Respaldar BD", self._respaldar_bd),
+            ("Exportar tablas", self._exportar_bd),
+            ("Ver historial", self._historial_bd),
+        )):
+            ttk.Button(
+                utilidades, text=texto, style="Small.TButton", command=comando
+            ).grid(row=0, column=indice, sticky="ew", padx=(0, 8))
+            utilidades.columnconfigure(indice, weight=1)
+
+        self._tip(
+            ventana,
+            "Importar todo usa los archivos ya seleccionados en Configuracion. "
+            "La base queda en data/cruce_correos.db y se respalda antes de "
+            "cada importacion.",
+            wraplength=760,
+        ).pack(fill="x", padx=20)
+
+        self._refrescar_bd()
+
+    def _cerrar_bd(self):
+        if self.ventana_bd is not None and self.ventana_bd.winfo_exists():
+            self.ventana_bd.withdraw()
+        self._actualizar_resumen()
+        self._cambiar_paso()
+
+    def _refrescar_bd(self):
+        if self.repo is None:
+            self.var_bd_info.set(
+                "No se pudo abrir la base de datos: " + (self.repo_error or "error")
+            )
+            self.var_bd_usar.set(False)
+            return
+        try:
+            datos = self.repo.resumen()
+        except Exception as e:
+            self.var_bd_info.set(f"No se pudo leer la base de datos: {e}")
+            return
+        ultima = datos.get("ultima_importacion")
+        texto = (
+            f"Archivo: {datos['archivo']}\n"
+            f"Alumnos: {datos['alumnos']}   |   Rotaciones: {datos['rotaciones']}   |   "
+            f"Asignaciones: {datos['asignaciones']}\n"
+            f"Campos: {datos['campos_clinicos']}   |   Centros: {datos['centros_clinicos']}   |   "
+            f"Tutores: {datos['tutores']}   |   Registros de catalogo: {datos['catalogo_registros']}"
+        )
+        if ultima:
+            texto += (
+                f"\nUltima importacion: {ultima.get('tipo')} "
+                f"({ultima.get('fecha')}) - {ultima.get('estado')}"
+            )
+        self.var_bd_info.set(texto)
+
+    def _cambiar_fuente(self):
+        fuente = "db" if self.var_bd_usar.get() else "excel"
+        self.var_fuente.set(fuente)
+        try:
+            cfg = app_config.cargar_config()
+            cfg["data_source"] = fuente
+            app_config.guardar_config(cfg)
+            self.config = cfg
+        except Exception as e:
+            self._agregar_log(f"No se pudo guardar la preferencia de fuente: {e}")
+        self._recargar_rotaciones()
+        self._actualizar_resumen()
+
+    def _ruta_importacion(self, tipo):
+        if tipo == "alumnos":
+            var, hoja = self.var_lista, self.var_hoja_lista
+            titulo = "Seleccionar listado de alumnos"
+        elif tipo == "rotaciones":
+            var, hoja = self.var_grilla, self.var_hoja_grilla
+            titulo = "Seleccionar planilla de rotaciones"
+        else:
+            var, hoja = self.var_catalogo, self.var_hoja_catalogo
+            titulo = "Seleccionar catalogo de tutores"
+
+        ruta = var.get().strip()
+        if not ruta or not Path(ruta).exists():
+            ruta = filedialog.askopenfilename(
+                title=titulo,
+                filetypes=[("Archivos Excel", "*.xlsx *.xlsm"), ("Todos", "*.*")],
+            )
+            if not ruta:
+                return None, None, None
+            var.set(ruta)
+            hoja.set("")
+        return Path(ruta), hoja.get() or None, var
+
+    def _periodo_para_importar(self, path, hoja):
+        try:
+            sugerido = self.repo.sugerir_periodo_archivo(path, hoja)
+        except Exception:
+            sugerido = ""
+        periodo = simpledialog.askstring(
+            "Periodo academico",
+            "Indica el periodo para las rotaciones:",
+            initialvalue=sugerido,
+            parent=self.ventana_bd or self.root,
+        )
+        if periodo is None:
+            return None
+        return periodo.strip() or sugerido
+
+    def _importar_bd(self, tipo):
+        if self.repo is None:
+            messagebox.showerror(
+                "Base de datos no disponible",
+                self.repo_error or "No se pudo abrir la base de datos.",
+            )
+            return
+
+        carrera = self.var_carrera.get().strip() or g.CARRERA
+        necesidades = ["alumnos", "rotaciones", "catalogo"] if tipo == "todo" else [tipo]
+        archivos = {}
+        for item in necesidades:
+            path, hoja, _ = self._ruta_importacion(item)
+            if path is None:
+                return
+            archivos[item] = (path, hoja)
+
+        periodo = None
+        if "rotaciones" in archivos:
+            periodo = self._periodo_para_importar(*archivos["rotaciones"])
+            if periodo is None:
+                return
+
+        try:
+            self.repo.respaldar()
+        except Exception:
+            pass
+
+        resultados = []
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            if "alumnos" in archivos:
+                resultados.append(
+                    self.repo.importar_alumnos(*archivos["alumnos"], carrera)
+                )
+            if "rotaciones" in archivos:
+                resultados.append(
+                    self.repo.importar_rotaciones(
+                        *archivos["rotaciones"], carrera, periodo
+                    )
+                )
+            if "catalogo" in archivos:
+                resultados.append(
+                    self.repo.importar_catalogo(*archivos["catalogo"], carrera)
+                )
+        except Exception as e:
+            self._agregar_log(f"ERROR importando a la base de datos: {e}")
+            messagebox.showerror("No se pudo importar", str(e))
+            return
+        finally:
+            self.root.config(cursor="")
+
+        self._refrescar_bd()
+        self._recargar_rotaciones()
+        self._actualizar_resumen()
+        lineas = []
+        for item in resultados:
+            lineas.append(
+                f"{item['tipo']}: {item['filas']} filas, "
+                f"{item['insertados']} nuevos, {item['actualizados']} actualizados, "
+                f"{item['errores']} errores"
+            )
+        self._agregar_log("Importacion a base de datos terminada:")
+        for linea in lineas:
+            self._agregar_log("  " + linea)
+        messagebox.showinfo(
+            "Importacion terminada",
+            "\n".join(lineas) + "\n\nLa base de datos esta lista.",
+        )
+
+    def _respaldar_bd(self):
+        if self.repo is None:
+            messagebox.showerror("Base de datos no disponible", self.repo_error)
+            return
+        try:
+            destino = self.repo.respaldar()
+        except Exception as e:
+            messagebox.showerror("No se pudo respaldar", str(e))
+            return
+        messagebox.showinfo("Respaldo creado", str(destino))
+
+    def _exportar_bd(self):
+        if self.repo is None:
+            messagebox.showerror("Base de datos no disponible", self.repo_error)
+            return
+        destino = filedialog.asksaveasfilename(
+            title="Exportar tablas a Excel",
+            initialfile="Respaldo_Cruce_Correos.xlsx",
+            defaultextension=".xlsx",
+            filetypes=[("Archivo Excel", "*.xlsx")],
+        )
+        if not destino:
+            return
+        try:
+            ruta = self.repo.exportar_excel(destino)
+        except Exception as e:
+            messagebox.showerror("No se pudo exportar", str(e))
+            return
+        messagebox.showinfo("Respaldo exportado", str(ruta))
+
+    def _historial_bd(self):
+        if self.repo is None:
+            messagebox.showerror("Base de datos no disponible", self.repo_error)
+            return
+        try:
+            filas = self.repo.historial(80)
+        except Exception as e:
+            messagebox.showerror("No se pudo leer el historial", str(e))
+            return
+        ventana = tk.Toplevel(self.root)
+        ventana.title("Historial de importaciones")
+        ventana.geometry("920x420")
+        ventana.configure(bg=COLOR_FONDO)
+        texto = tk.Text(
+            ventana, wrap="none", bg="#FFFFFF", fg=COLOR_TEXTO,
+            font=("Consolas", 9), padx=10, pady=10,
+        )
+        texto.pack(fill="both", expand=True, padx=14, pady=14)
+        for fila in filas:
+            texto.insert(
+                tk.END,
+                f"{fila['id']:>3}  {fila['fecha']}  {fila['tipo']:<12} "
+                f"{fila['estado']:<16} filas={fila['filas']} "
+                f"nuevos={fila['insertados']} act={fila['actualizados']} "
+                f"err={fila['errores']}  {fila.get('archivo', '')}\n",
+            )
+        texto.config(state="disabled")
 
     def _abrir_diccionario(self):
         if self.ventana_dic is not None and self.ventana_dic.winfo_exists():
@@ -1074,10 +1411,23 @@ class Aplicacion:
             fila=0, columna=0, padx=(0, 7),
         )
         marco.columnconfigure(0, weight=1)
-        marco.rowconfigure(0, weight=1)
+        marco.rowconfigure(1, weight=1)
+
+        filtro = tk.Frame(marco, bg=COLOR_TARJETA)
+        filtro.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        ttk.Label(
+            filtro, text="Periodo", style="Card.TLabel"
+        ).pack(side="left")
+        self.combo_periodo = ttk.Combobox(
+            filtro, textvariable=self.var_periodo, state="disabled", width=18
+        )
+        self.combo_periodo.pack(side="left", padx=(8, 0))
+        self.combo_periodo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._recargar_rotaciones()
+        )
 
         contenedor = tk.Frame(marco, bg=COLOR_TARJETA)
-        contenedor.grid(row=0, column=0, sticky="nsew")
+        contenedor.grid(row=1, column=0, sticky="nsew")
         contenedor.columnconfigure(0, weight=1)
         contenedor.rowconfigure(0, weight=1)
 
@@ -1113,7 +1463,7 @@ class Aplicacion:
         ).grid(row=1, column=0)
 
         pie = tk.Frame(marco, bg=COLOR_TARJETA)
-        pie.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        pie.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         self.lbl_conteo = ttk.Label(
             pie, text="0 rotaciones seleccionadas", style="Count.TLabel"
         )
@@ -1324,18 +1674,6 @@ class Aplicacion:
         self.var_comunes.set("")
 
     def _revisar_grupos(self):
-        lista = self.var_lista.get().strip()
-        grilla_path = self.var_grilla.get().strip()
-        if not lista or not Path(lista).exists():
-            messagebox.showwarning(
-                "Falta el listado", "Selecciona el listado de alumnos."
-            )
-            return
-        if not grilla_path or not Path(grilla_path).exists():
-            messagebox.showwarning(
-                "Falta la planilla", "Selecciona la planilla de rotaciones."
-            )
-            return
         rotaciones = self._seleccionadas()
         if not rotaciones:
             messagebox.showwarning(
@@ -1343,24 +1681,19 @@ class Aplicacion:
             )
             return
         try:
-            maestro = g.cargar_maestro(
-                Path(lista), self.var_hoja_lista.get() or None
-            )
-            catalogo = self._catalogo_seleccionado()
+            maestro = self._cargar_maestro_actual()
+            self._asegurar_grilla_actual()
+            catalogo = self._cargar_catalogo_actual()
         except Exception as e:
             messagebox.showerror("No se pudo preparar la revision", str(e))
             return
-        fuente_actual = (grilla_path, self.var_hoja_grilla.get() or None)
-        if self.grilla_fuente != fuente_actual or not self.grilla:
-            self._recargar_rotaciones()
-        if not self.grilla:
-            messagebox.showerror(
-                "Planilla invalida",
-                "No se pudieron leer las rotaciones de la planilla seleccionada.",
-            )
-            return
         salida = self.var_salida.get().strip()
-        base_salida = Path(salida) if salida else Path(lista).parent
+        if salida:
+            base_salida = Path(salida)
+        elif self._usar_bd():
+            base_salida = g.BASE_DIR
+        else:
+            base_salida = Path(self.var_lista.get().strip()).parent
         self.root.config(cursor="watch")
         self.root.update_idletasks()
         try:
@@ -1498,26 +1831,66 @@ class Aplicacion:
     # ------------------------------------------------------------------
     # ROTACIONES
     # ------------------------------------------------------------------
+    def _actualizar_periodos(self):
+        if not hasattr(self, "combo_periodo"):
+            return
+        if self._usar_bd():
+            carrera = self.var_carrera.get().strip() or g.CARRERA
+            try:
+                periodos = [p["nombre"] for p in self.repo.listar_periodos(carrera)]
+            except Exception as e:
+                self._agregar_log(f"No se pudieron leer los periodos: {e}")
+                periodos = []
+            self.combo_periodo.config(state="readonly")
+            self.combo_periodo["values"] = periodos
+            if self.var_periodo.get().strip() not in periodos:
+                self.var_periodo.set(periodos[0] if periodos else "")
+        else:
+            self.combo_periodo.config(state="disabled")
+            self.combo_periodo["values"] = []
+            self.var_periodo.set("")
+
     def _recargar_rotaciones(self):
         self.lista_rot.delete(0, tk.END)
         self.codigos_rot = []
         self.grilla = {}
 
-        ruta = self.var_grilla.get().strip()
-        if not ruta or not Path(ruta).exists():
-            self.grilla_fuente = None
-            self._actualizar_conteo()
-            return
+        if self._usar_bd():
+            self._actualizar_periodos()
+            carrera = self.var_carrera.get().strip() or g.CARRERA
+            periodo = self.var_periodo.get().strip()
+            if not periodo:
+                self.grilla_fuente = None
+                self._actualizar_conteo()
+                self._agregar_log(
+                    "La base de datos no tiene rotaciones para la carrera seleccionada."
+                )
+                return
+            try:
+                self.grilla = self.repo.obtener_grilla(carrera, periodo)
+                self.grilla_fuente = ("db", carrera, periodo)
+            except Exception as e:
+                self._agregar_log(f"No se pudo leer la base de datos: {e}")
+                self.grilla_fuente = None
+                self._actualizar_conteo()
+                return
+        else:
+            self._actualizar_periodos()
+            ruta = self.var_grilla.get().strip()
+            if not ruta or not Path(ruta).exists():
+                self.grilla_fuente = None
+                self._actualizar_conteo()
+                return
 
-        hoja = self.var_hoja_grilla.get() or None
-        try:
-            self.grilla = g.parsear_grilla(Path(ruta), hoja)
-            self.grilla_fuente = (ruta, hoja)
-        except Exception as e:
-            self._agregar_log(f"No se pudo leer la planilla de rotaciones: {e}")
-            self.grilla_fuente = None
-            self._actualizar_conteo()
-            return
+            hoja = self.var_hoja_grilla.get() or None
+            try:
+                self.grilla = g.parsear_grilla(Path(ruta), hoja)
+                self.grilla_fuente = (ruta, hoja)
+            except Exception as e:
+                self._agregar_log(f"No se pudo leer la planilla de rotaciones: {e}")
+                self.grilla_fuente = None
+                self._actualizar_conteo()
+                return
 
         for rot in g.ordenar_rotaciones(self.grilla):
             info = self.grilla[rot]
@@ -1527,9 +1900,11 @@ class Aplicacion:
             self.codigos_rot.append(rot)
 
         self._seleccionar_todas()
+        fuente = "base de datos" if self._usar_bd() else "planilla de rotaciones"
         self._agregar_log(
-            f"Planilla de rotaciones cargada: {len(self.codigos_rot)} rotaciones disponibles."
+            f"{fuente.capitalize()} cargada: {len(self.codigos_rot)} rotaciones disponibles."
         )
+        self._actualizar_resumen()
 
     def _seleccionadas(self):
         return [self.codigos_rot[i] for i in self.lista_rot.curselection()]
@@ -1554,22 +1929,15 @@ class Aplicacion:
         if self.ejecutando:
             return
 
-        lista = self.var_lista.get().strip()
-        grilla = self.var_grilla.get().strip()
         template = self.var_plantilla.get().strip()
         salida = self.var_salida.get().strip()
 
-        for nombre, ruta in (
-            ("listado de alumnos", lista),
-            ("planilla de rotaciones", grilla),
-            ("template de carta", template),
-        ):
-            if not ruta or not Path(ruta).exists():
-                messagebox.showwarning(
-                    "Falta un archivo",
-                    f"Selecciona el {nombre} antes de continuar.",
-                )
-                return
+        if not template or not Path(template).exists():
+            messagebox.showwarning(
+                "Falta un archivo",
+                "Selecciona el template de carta antes de continuar.",
+            )
+            return
 
         if not salida:
             messagebox.showwarning("Falta la salida", "Selecciona una carpeta de salida.")
@@ -1583,26 +1951,10 @@ class Aplicacion:
             return
 
         try:
-            maestro = g.cargar_maestro(Path(lista), self.var_hoja_lista.get() or None)
+            maestro = self._cargar_maestro_actual()
+            self._asegurar_grilla_actual()
         except Exception as e:
-            messagebox.showerror("No se pudo leer el listado", str(e))
-            return
-
-        if not maestro:
-            messagebox.showwarning(
-                "Listado vacio",
-                "No se encontraron alumnos en la hoja seleccionada.",
-            )
-            return
-
-        fuente_actual = (grilla, self.var_hoja_grilla.get() or None)
-        if self.grilla_fuente != fuente_actual or not self.grilla:
-            self._recargar_rotaciones()
-        if not self.grilla:
-            messagebox.showerror(
-                "Planilla invalida",
-                "No se pudieron leer las rotaciones de la grilla seleccionada.",
-            )
+            messagebox.showerror("No se pudo preparar la generacion", str(e))
             return
 
         total, _ = g.planificar(self.grilla, maestro, rotaciones)
@@ -1622,8 +1974,10 @@ class Aplicacion:
         self._preparar_ejecucion(total)
 
         parametros = {
-            "lista": lista,
+            "lista": self.var_lista.get().strip(),
             "hoja_lista": self.var_hoja_lista.get() or None,
+            "maestro": maestro,
+            "usar_bd": self._usar_bd(),
             "grilla": self.grilla,
             "rotaciones": list(rotaciones),
             "template": template,
@@ -1639,19 +1993,7 @@ class Aplicacion:
 
     def _generar_planilla(self):
         lista = self.var_lista.get().strip()
-        grilla_path = self.var_grilla.get().strip()
         salida = self.var_salida.get().strip()
-
-        if not lista or not Path(lista).exists():
-            messagebox.showwarning(
-                "Falta el listado", "Selecciona el listado de alumnos."
-            )
-            return
-        if not grilla_path or not Path(grilla_path).exists():
-            messagebox.showwarning(
-                "Falta la planilla", "Selecciona la planilla de rotaciones."
-            )
-            return
 
         rotaciones = self._seleccionadas()
         if not rotaciones:
@@ -1661,29 +2003,19 @@ class Aplicacion:
             return
 
         try:
-            maestro = g.cargar_maestro(Path(lista), self.var_hoja_lista.get() or None)
+            maestro = self._cargar_maestro_actual()
+            self._asegurar_grilla_actual()
         except Exception as e:
-            messagebox.showerror("No se pudo leer el listado", str(e))
-            return
-        if not maestro:
-            messagebox.showwarning(
-                "Listado vacio",
-                "No se encontraron alumnos en la hoja seleccionada.",
-            )
+            messagebox.showerror("No se pudo preparar la planilla", str(e))
             return
 
-        fuente_actual = (grilla_path, self.var_hoja_grilla.get() or None)
-        if self.grilla_fuente != fuente_actual or not self.grilla:
-            self._recargar_rotaciones()
-        if not self.grilla:
-            messagebox.showerror(
-                "Planilla invalida",
-                "No se pudieron leer las rotaciones de la planilla seleccionada.",
-            )
-            return
-
-        base_salida = Path(salida) if salida else Path(lista).parent
-        inicial = base_salida if base_salida.exists() else Path(lista).parent
+        if salida:
+            base_salida = Path(salida)
+        elif self._usar_bd():
+            base_salida = g.BASE_DIR
+        else:
+            base_salida = Path(lista).parent
+        inicial = base_salida if base_salida.exists() else g.BASE_DIR
         destino = filedialog.asksaveasfilename(
             title="Guardar planilla de correos",
             initialdir=str(inicial),
@@ -1709,7 +2041,7 @@ class Aplicacion:
             )
             correo_recordatorio = ""
         try:
-            catalogo = self._catalogo_seleccionado()
+            catalogo = self._cargar_catalogo_actual()
         except Exception as e:
             messagebox.showerror("No se pudo leer el catalogo de tutores", str(e))
             return
@@ -1812,23 +2144,53 @@ class Aplicacion:
             )
         return registros
 
+    def _cargar_maestro_actual(self):
+        if self._usar_bd():
+            carrera = self.var_carrera.get().strip() or g.CARRERA
+            maestro = self.repo.obtener_maestro(carrera)
+            if not maestro:
+                raise ValueError(
+                    "La base de datos no tiene alumnos importados para la carrera "
+                    f"{carrera}."
+                )
+            return maestro
+        lista = self.var_lista.get().strip()
+        if not lista or not Path(lista).exists():
+            raise ValueError("Selecciona el listado de alumnos.")
+        maestro = g.cargar_maestro(Path(lista), self.var_hoja_lista.get() or None)
+        if not maestro:
+            raise ValueError("No se encontraron alumnos en la hoja seleccionada.")
+        return maestro
+
+    def _cargar_catalogo_actual(self):
+        if self._usar_bd():
+            carrera = self.var_carrera.get().strip() or g.CARRERA
+            return self.repo.obtener_catalogo(carrera)
+        return self._catalogo_seleccionado()
+
+    def _asegurar_grilla_actual(self):
+        if self._usar_bd():
+            carrera = self.var_carrera.get().strip() or g.CARRERA
+            periodo = self.var_periodo.get().strip()
+            fuente_actual = ("db", carrera, periodo)
+            if self.grilla_fuente != fuente_actual or not self.grilla:
+                self._recargar_rotaciones()
+        else:
+            grilla = self.var_grilla.get().strip()
+            fuente_actual = (grilla, self.var_hoja_grilla.get() or None)
+            if self.grilla_fuente != fuente_actual or not self.grilla:
+                self._recargar_rotaciones()
+        if not self.grilla:
+            raise ValueError(
+                "No hay rotaciones cargadas para la carrera y periodo seleccionados."
+            )
+        return self.grilla
+
     def _crear_borradores(self):
         if self.ejecutando:
             return
 
         lista = self.var_lista.get().strip()
-        grilla_path = self.var_grilla.get().strip()
-
-        if not lista or not Path(lista).exists():
-            messagebox.showwarning(
-                "Falta el listado", "Selecciona el listado de alumnos."
-            )
-            return
-        if not grilla_path or not Path(grilla_path).exists():
-            messagebox.showwarning(
-                "Falta la planilla", "Selecciona la planilla de rotaciones."
-            )
-            return
 
         rotaciones = self._seleccionadas()
         if not rotaciones:
@@ -1838,27 +2200,10 @@ class Aplicacion:
             return
 
         try:
-            maestro = g.cargar_maestro(
-                Path(lista), self.var_hoja_lista.get() or None
-            )
+            maestro = self._cargar_maestro_actual()
+            self._asegurar_grilla_actual()
         except Exception as e:
-            messagebox.showerror("No se pudo leer el listado", str(e))
-            return
-        if not maestro:
-            messagebox.showwarning(
-                "Listado vacio",
-                "No se encontraron alumnos en la hoja seleccionada.",
-            )
-            return
-
-        fuente_actual = (grilla_path, self.var_hoja_grilla.get() or None)
-        if self.grilla_fuente != fuente_actual or not self.grilla:
-            self._recargar_rotaciones()
-        if not self.grilla:
-            messagebox.showerror(
-                "Planilla invalida",
-                "No se pudieron leer las rotaciones de la planilla seleccionada.",
-            )
+            messagebox.showerror("No se pudo preparar el envio", str(e))
             return
 
         correo_template = self.var_correo_template.get().strip()
@@ -1876,13 +2221,18 @@ class Aplicacion:
             )
             correo_recordatorio = ""
         try:
-            catalogo = self._catalogo_seleccionado()
+            catalogo = self._cargar_catalogo_actual()
         except Exception as e:
             messagebox.showerror("No se pudo leer el catalogo de tutores", str(e))
             return
 
         salida = self.var_salida.get().strip()
-        base_salida = Path(salida) if salida else Path(lista).parent
+        if salida:
+            base_salida = Path(salida)
+        elif self._usar_bd():
+            base_salida = g.BASE_DIR
+        else:
+            base_salida = Path(lista).parent
         modos = {
             "Por grupo: presentacion + recordatorio":
                 "grupo_presentacion_recordatorio",
@@ -2022,10 +2372,12 @@ class Aplicacion:
                 Path(parametros["template"]), log=self._log
             )
 
-            self._log("Cargando listado de alumnos...")
-            maestro = g.cargar_maestro(
-                Path(parametros["lista"]), parametros["hoja_lista"]
-            )
+            maestro = parametros.get("maestro")
+            if maestro is None:
+                self._log("Cargando listado de alumnos...")
+                maestro = g.cargar_maestro(
+                    Path(parametros["lista"]), parametros["hoja_lista"]
+                )
             self._log(f"{len(maestro)} alumnos cargados.")
 
             Path(parametros["salida"]).mkdir(parents=True, exist_ok=True)
@@ -2164,6 +2516,8 @@ class Aplicacion:
                 "Todavia se estan generando cartas. Deseas salir de todas formas?",
             ):
                 return
+        if self.repo is not None:
+            self.repo.cerrar()
         self.root.destroy()
 
 

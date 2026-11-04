@@ -18,8 +18,13 @@ APP_NAME = "CruceCorreos"
 CONFIG_NAME = "config.json"
 
 DEFAULT_CONFIG = {
-    "version": 1,
+    "version": 2,
     "backend": "json",
+    "data_source": "excel",
+    "database": {
+        "engine": "sqlite",
+        "path": "data/cruce_correos.db",
+    },
     "campos_clinicos": {
         "M\u00fasculo esquel\u00e9tico CEDAM LA SERENA": "CEDAM LA SERENA",
         "M\u00fasculo esquel\u00e9tico-M\u00c1SKINE Tutor Francisco Ordenes": "M\u00c1SKINE",
@@ -75,6 +80,21 @@ def appdata_dir() -> Path:
     return Path.home() / f".{APP_NAME.lower()}"
 
 
+def ruta_base_datos(config: dict = None) -> Path:
+    """Devuelve la ruta absoluta de la base de datos configurada."""
+    datos = config if config is not None else cargar_config()
+    db = datos.get("database", {}) if isinstance(datos, dict) else {}
+    valor = str(db.get("path") or "data/cruce_correos.db").strip()
+    ruta = Path(valor)
+    if not ruta.is_absolute():
+        ruta = app_dir() / ruta
+    return ruta.resolve()
+
+
+def carpeta_respaldos(config: dict = None) -> Path:
+    return ruta_base_datos(config).parent / "backups"
+
+
 def config_candidates() -> list:
     candidatos = []
     env = os.environ.get("CRUCE_CORREOS_CONFIG")
@@ -110,7 +130,7 @@ def _leer_json(ruta: Path) -> dict:
 def _mezclar(base: dict, datos: dict) -> dict:
     resultado = copy.deepcopy(base)
     for clave, valor in datos.items():
-        if clave in ("outlook", "recordatorio") and isinstance(valor, dict):
+        if clave in ("outlook", "recordatorio", "database") and isinstance(valor, dict):
             actual = resultado.get(clave, {})
             if isinstance(actual, dict):
                 actual.update(valor)

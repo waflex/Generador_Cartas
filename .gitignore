@@ -31,6 +31,13 @@ dist/
 # Salidas generadas
 cartas_output/
 
+# Base de datos local y respaldos
+data/*.db
+data/*.db-*
+data/backups/*
+!data/.gitkeep
+!data/backups/.gitkeep
+
 # Temporales de Office
 ~$*
 
