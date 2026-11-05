@@ -78,6 +78,14 @@ El boton `Base de datos` de la barra superior permite:
 - Crear respaldos en `data/backups/`.
 - Exportar las tablas principales a Excel.
 - Revisar el historial de importaciones.
+- Abrir el `Explorador de datos` para consultar alumnos, carreras, centros
+  clinicos, tutores y catalogo con filtros y exportacion de la vista.
+
+La carrera de cada alumno se detecta desde una columna `Carrera`, `Escuela` o
+`Programa` del listado; si no existe, se intenta reconocer desde el nombre del
+archivo o de la hoja. Como ultimo respaldo se usa la carrera seleccionada en la
+interfaz. El catalogo de tutores tambien puede traer una columna `Carrera` para
+clasificar cada registro por carrera.
 
 Cada rotacion guarda fecha de inicio, fecha de termino y el texto original.
 La planilla de correos agrega las columnas `Fecha_Inicio` y `Fecha_Termino`,
@@ -96,16 +104,23 @@ pendiente y se informa en las incidencias de la importacion.
 3. Indicar el periodo de las rotaciones, por ejemplo `2026-S2`.
 4. Marcar `Usar la base de datos como fuente de datos`.
 5. Revisar y generar las cartas, la planilla y los borradores como siempre.
+6. Usar `Explorar datos` para auditar lo importado. Los filtros por carrera y
+   centro se aplican a todas las vistas; `Exportar vista` guarda solo las filas
+   visibles.
 
-Tambien se puede volver al modo Excel desmarcando la misma opcion.
+Si un campo clinico no tiene centro en el catalogo, los alumnos aparecen bajo
+el filtro `Sin centro (campo no catalogado)`. Tambien se puede volver al modo
+Excel desmarcando la opcion de la base de datos.
 
 ## Archivos de entrada
 
-- Listado de alumnos: Excel con RUT, nombre y correo institucional.
+- Listado de alumnos: Excel con RUT, nombre y correo institucional. La columna
+  `Carrera` es opcional; si existe, permite importar alumnos de varias carreras
+  en un mismo archivo.
 - Planilla de rotaciones: Excel con columnas `R1`, `R2`, etc., campos
   clinicos y alumnos asignados.
-- Catalogo de tutores: Excel con columnas como `Campo Clinico`, `Direccion`,
-  `Contacto` y `Tutor(a)`.
+- Catalogo de tutores: Excel con columnas como `Carrera`, `Campo Clinico`,
+  `Direccion`, `Contacto` y `Tutor(a)`.
 - `Correo_Tutor` es opcional. Si no existe o esta vacia, el correo se busca
   dentro de `Tutor(a)` y `Contacto` usando una expresion regular.
 - Plantillas Word: carta de presentacion, correo de presentacion y correo de

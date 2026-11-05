@@ -278,7 +278,7 @@ def asegurar_template_docx(template=None, log=None) -> Path:
 # MAESTRO DE ALUMNOS
 # ---------------------------------------------------------------------------
 def detectar_columnas_maestro(ws):
-    """Detecta RUT/NOMBRE/CORREO y las columnas opcionales AREA/TIPO."""
+    """Detecta RUT/NOMBRE/CORREO y las columnas opcionales AREA/TIPO/CARRERA."""
     for fila, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True), start=1):
         norm = [normalizar(v) for v in row]
         if "RUT" in norm and "NOMBRE" in norm:
@@ -295,37 +295,61 @@ def detectar_columnas_maestro(ws):
                 (j for j, n in enumerate(norm) if n == "TIPO" or n.startswith("TIPO ")),
                 None,
             )
+            cols["carrera"] = next(
+                (
+                    j for j, n in enumerate(norm)
+                    if "CARRERA" in n or "ESCUELA" in n or "PROGRAMA" in n
+                ),
+                None,
+            )
             return cols, fila + 1
-    return {"rut": 3, "nombre": 4, "correo": 5, "area": None, "tipo": None}, 2
+    return {
+        "rut": 3, "nombre": 4, "correo": 5, "area": None, "tipo": None,
+        "carrera": None,
+    }, 2
+
+
+def cargar_alumnos(path: Path, hoja=None) -> list:
+    """Lee el listado de alumnos y conserva la carrera de cada fila."""
+    wb = openpyxl.load_workbook(path, data_only=True)
+    try:
+        ws = elegir_hoja(wb, hoja, HOJA_MAESTRO)
+        cols, primera_fila = detectar_columnas_maestro(ws)
+
+        alumnos = []
+        for row in ws.iter_rows(min_row=primera_fila, values_only=True):
+            def valor(indice):
+                if indice is None or indice >= len(row):
+                    return None
+                return row[indice]
+
+            rut = valor(cols["rut"])
+            nombre = valor(cols["nombre"])
+            correo = valor(cols["correo"])
+            area = valor(cols.get("area"))
+            tipo = valor(cols.get("tipo"))
+            carrera = valor(cols.get("carrera"))
+
+            if not nombre or str(nombre).strip() in ("", "NOMBRE"):
+                continue
+            alumnos.append({
+                "nombre_original": str(nombre).strip(),
+                "rut_fmt": formatear_rut(rut) if rut is not None else "",
+                "correo": str(correo).strip() if correo else "",
+                "area": str(area).strip() if area else "",
+                "tipo": str(tipo).strip() if tipo else "",
+                "carrera": str(carrera).strip() if carrera else "",
+            })
+        return alumnos
+    finally:
+        wb.close()
 
 
 def cargar_maestro(path: Path, hoja=None) -> dict:
-    wb = openpyxl.load_workbook(path, data_only=True)
-    ws = elegir_hoja(wb, hoja, HOJA_MAESTRO)
-    cols, primera_fila = detectar_columnas_maestro(ws)
-
+    """Devuelve el diccionario de alumnos usado por cartas y planillas."""
     alumnos = {}
-    for row in ws.iter_rows(min_row=primera_fila, values_only=True):
-        def valor(indice):
-            if indice is None or indice >= len(row):
-                return None
-            return row[indice]
-
-        rut = valor(cols["rut"])
-        nombre = valor(cols["nombre"])
-        correo = valor(cols["correo"])
-        area = valor(cols.get("area"))
-        tipo = valor(cols.get("tipo"))
-
-        if not nombre or str(nombre).strip() in ("", "NOMBRE"):
-            continue
-        alumnos[normalizar(nombre)] = {
-            "nombre_original": str(nombre).strip(),
-            "rut_fmt": formatear_rut(rut) if rut is not None else "",
-            "correo": str(correo).strip() if correo else "",
-            "area": str(area).strip() if area else "",
-            "tipo": str(tipo).strip() if tipo else "",
-        }
+    for alumno in cargar_alumnos(path, hoja):
+        alumnos[normalizar(alumno["nombre_original"])] = dict(alumno)
     return alumnos
 
 

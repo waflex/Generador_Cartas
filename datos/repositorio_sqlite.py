@@ -68,6 +68,293 @@ class Repositorio:
             for fila in filas
         ]
 
+    def listar_carreras(self, centro_id=None, texto=""):
+        patron = f"%{g.normalizar(texto)}%"
+        condiciones = []
+        parametros = []
+        if centro_id == -1:
+            condiciones.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM catalogo_registros cr
+                    WHERE cr.carrera_norm = c.nombre_norm
+                      AND cr.centro_id IS NULL
+                )
+                """
+            )
+        elif centro_id:
+            condiciones.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM catalogo_registros cr
+                    WHERE cr.carrera_norm = c.nombre_norm
+                      AND cr.centro_id = ?
+                )
+                """
+            )
+            parametros.append(centro_id)
+        if texto:
+            condiciones.append("c.nombre_norm LIKE ?")
+            parametros.append(patron)
+        where = " WHERE " + " AND ".join(condiciones) if condiciones else ""
+        filas = self.con.execute(
+            f"""
+            SELECT c.id, c.nombre, c.activa,
+                   (SELECT COUNT(*) FROM alumnos a
+                    WHERE a.carrera_id = c.id) AS alumnos,
+                   (SELECT COUNT(*) FROM rotaciones r
+                    WHERE r.carrera_id = c.id) AS rotaciones,
+                   (SELECT COUNT(*) FROM campos_clinicos cc
+                    WHERE cc.carrera_id = c.id) AS campos,
+                   (SELECT COUNT(DISTINCT cr.centro_id)
+                    FROM catalogo_registros cr
+                    WHERE cr.carrera_norm = c.nombre_norm
+                      AND cr.centro_id IS NOT NULL) AS centros,
+                   (SELECT COUNT(DISTINCT cr.tutor_id)
+                    FROM catalogo_registros cr
+                    WHERE cr.carrera_norm = c.nombre_norm
+                      AND cr.tutor_id IS NOT NULL) AS tutores,
+                   (SELECT COUNT(*) FROM catalogo_registros cr
+                    WHERE cr.carrera_norm = c.nombre_norm) AS catalogo
+            FROM carreras c{where}
+            ORDER BY c.nombre
+            """,
+            parametros,
+        )
+        return [dict(fila) for fila in filas]
+
+    def listar_centros(self, carrera="", centro_id=None, texto=""):
+        if centro_id == -1:
+            return []
+        patron = f"%{g.normalizar(texto)}%"
+        condiciones = []
+        parametros = []
+        if centro_id:
+            condiciones.append("cc.id = ?")
+            parametros.append(centro_id)
+        if carrera:
+            condiciones.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM catalogo_registros cr
+                    WHERE cr.centro_id = cc.id
+                      AND cr.carrera_norm = ?
+                )
+                """
+            )
+            parametros.append(g.normalizar(carrera))
+        if texto:
+            condiciones.append(
+                "(cc.nombre_norm LIKE ? OR cc.direccion_norm LIKE ? "
+                "OR cc.contacto LIKE ?)"
+            )
+            parametros.extend([patron, patron, patron])
+        where = " WHERE " + " AND ".join(condiciones) if condiciones else ""
+        filas = self.con.execute(
+            f"""
+            SELECT cc.id, cc.nombre, cc.direccion, cc.contacto,
+                   cc.hora_ingreso,
+                   (SELECT COUNT(DISTINCT cr.carrera_norm)
+                    FROM catalogo_registros cr
+                    WHERE cr.centro_id = cc.id) AS carreras,
+                   (SELECT GROUP_CONCAT(DISTINCT cr.carrera)
+                    FROM catalogo_registros cr
+                    WHERE cr.centro_id = cc.id) AS carreras_nombres,
+                   (SELECT COUNT(DISTINCT cr.tutor_id)
+                    FROM catalogo_registros cr
+                    WHERE cr.centro_id = cc.id
+                      AND cr.tutor_id IS NOT NULL) AS tutores,
+                   (SELECT COUNT(*) FROM catalogo_registros cr
+                    WHERE cr.centro_id = cc.id) AS registros
+            FROM centros_clinicos cc{where}
+            ORDER BY cc.nombre, cc.direccion
+            """,
+            parametros,
+        )
+        return [dict(fila) for fila in filas]
+
+    def listar_tutores(self, carrera="", centro_id=None, texto=""):
+        patron = f"%{g.normalizar(texto)}%"
+        condiciones = []
+        parametros = []
+        if carrera:
+            condiciones.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM catalogo_registros cr
+                    WHERE cr.tutor_id = t.id
+                      AND cr.carrera_norm = ?
+                )
+                """
+            )
+            parametros.append(g.normalizar(carrera))
+        if centro_id == -1:
+            condiciones.append(
+                """
+                NOT EXISTS (
+                    SELECT 1 FROM catalogo_registros cr
+                    WHERE cr.tutor_id = t.id
+                      AND cr.centro_id IS NOT NULL
+                )
+                """
+            )
+        elif centro_id:
+            condiciones.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM catalogo_registros cr
+                    WHERE cr.tutor_id = t.id
+                      AND cr.centro_id = ?
+                )
+                """
+            )
+            parametros.append(centro_id)
+        if texto:
+            condiciones.append(
+                "(t.nombre_norm LIKE ? OR t.correo LIKE ?)"
+            )
+            parametros.extend([patron, patron])
+        where = " WHERE " + " AND ".join(condiciones) if condiciones else ""
+        filas = self.con.execute(
+            f"""
+            SELECT t.id, t.nombre, t.correo, t.correo_origen,
+                   (SELECT COUNT(DISTINCT cr.centro_id)
+                    FROM catalogo_registros cr
+                    WHERE cr.tutor_id = t.id
+                      AND cr.centro_id IS NOT NULL) AS centros,
+                   (SELECT COUNT(DISTINCT cr.carrera_norm)
+                    FROM catalogo_registros cr
+                    WHERE cr.tutor_id = t.id) AS carreras,
+                   (SELECT GROUP_CONCAT(DISTINCT cr.carrera)
+                    FROM catalogo_registros cr
+                    WHERE cr.tutor_id = t.id) AS carreras_nombres,
+                   (SELECT COUNT(DISTINCT cr.campo_id)
+                    FROM catalogo_registros cr
+                    WHERE cr.tutor_id = t.id
+                      AND cr.campo_id IS NOT NULL) AS campos
+            FROM tutores t{where}
+            ORDER BY t.nombre
+            """,
+            parametros,
+        )
+        return [dict(fila) for fila in filas]
+
+    def listar_alumnos(self, carrera="", centro_id=None, texto=""):
+        patron = f"%{g.normalizar(texto)}%"
+        rut_patron = "%" + "".join(
+            c for c in str(texto or "").upper() if c.isdigit() or c == "K"
+        ) + "%"
+        condiciones = []
+        parametros = []
+        if carrera:
+            condiciones.append("c.nombre_norm = ?")
+            parametros.append(g.normalizar(carrera))
+        if centro_id == -1:
+            condiciones.append(
+                """
+                NOT EXISTS (
+                    SELECT 1 FROM asignaciones a
+                    JOIN catalogo_registros cr ON cr.campo_id = a.campo_id
+                    WHERE a.alumno_id = al.id
+                      AND cr.centro_id IS NOT NULL
+                      AND cr.carrera_norm = c.nombre_norm
+                )
+                """
+            )
+        elif centro_id:
+            condiciones.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM asignaciones a
+                    JOIN catalogo_registros cr ON cr.campo_id = a.campo_id
+                    WHERE a.alumno_id = al.id
+                      AND cr.centro_id = ?
+                      AND cr.carrera_norm = c.nombre_norm
+                )
+                """
+            )
+            parametros.append(centro_id)
+        if texto:
+            if any(c.isdigit() for c in str(texto)):
+                condiciones.append(
+                    "(al.nombre_norm LIKE ? OR al.rut_norm LIKE ? "
+                    "OR al.correo LIKE ?)"
+                )
+                parametros.extend([patron, rut_patron, patron])
+            else:
+                condiciones.append(
+                    "(al.nombre_norm LIKE ? OR al.correo LIKE ?)"
+                )
+                parametros.extend([patron, patron])
+        where = " WHERE " + " AND ".join(condiciones) if condiciones else ""
+        filas = self.con.execute(
+            f"""
+            SELECT al.id, al.rut, al.nombre, al.correo, al.area, al.tipo,
+                   c.nombre AS carrera,
+                   (SELECT COUNT(*) FROM asignaciones a
+                    WHERE a.alumno_id = al.id) AS asignaciones,
+                   (SELECT GROUP_CONCAT(DISTINCT p.nombre)
+                    FROM asignaciones a
+                    JOIN rotaciones r ON r.id = a.rotacion_id
+                    JOIN periodos p ON p.id = r.periodo_id
+                    WHERE a.alumno_id = al.id) AS periodos
+            FROM alumnos al
+            JOIN carreras c ON c.id = al.carrera_id{where}
+            ORDER BY c.nombre, al.nombre
+            """,
+            parametros,
+        )
+        return [dict(fila) for fila in filas]
+
+    def listar_catalogo(self, carrera="", centro_id=None, texto=""):
+        patron = f"%{g.normalizar(texto)}%"
+        condiciones = []
+        parametros = []
+        if carrera:
+            condiciones.append("cr.carrera_norm = ?")
+            parametros.append(g.normalizar(carrera))
+        if centro_id == -1:
+            condiciones.append("cr.centro_id IS NULL")
+        elif centro_id:
+            condiciones.append("cr.centro_id = ?")
+            parametros.append(centro_id)
+        if texto:
+            condiciones.append(
+                "(cr.campo_norm LIKE ? OR cr.tutor_norm LIKE ? "
+                "OR cc.nombre_norm LIKE ? OR cr.carrera_norm LIKE ?)"
+            )
+            parametros.extend([patron, patron, patron, patron])
+        where = " WHERE " + " AND ".join(condiciones) if condiciones else ""
+        filas = self.con.execute(
+            f"""
+            SELECT cr.id, cr.carrera, cr.tipo_practica, cr.area, cr.campo,
+                   cc.nombre AS centro, cc.direccion, cr.contacto,
+                   cr.tutor, cr.correo_tutor, cr.correo_tutor_origen,
+                   cr.hora_ingreso, cr.nombre_residencia
+            FROM catalogo_registros cr
+            LEFT JOIN centros_clinicos cc ON cc.id = cr.centro_id{where}
+            ORDER BY cr.carrera_norm, cr.campo_norm, cr.tutor_norm, cr.fila
+            """,
+            parametros,
+        )
+        return [dict(fila) for fila in filas]
+
+    def exportar_vista(self, destino, columnas, filas):
+        destino = Path(destino)
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        libro = openpyxl.Workbook()
+        hoja = libro.active
+        hoja.title = "Datos"
+        hoja.append([titulo for _clave, titulo, _ancho in columnas])
+        for fila in filas:
+            hoja.append([fila.get(clave, "") for clave, _titulo, _ancho in columnas])
+        for indice, (_clave, _titulo, ancho) in enumerate(columnas, start=1):
+            hoja.column_dimensions[
+                openpyxl.utils.get_column_letter(indice)
+            ].width = ancho
+        libro.save(destino)
+        return destino
+
     def _periodo(self, periodo, carrera_id):
         if periodo:
             fila = self.con.execute(
@@ -259,13 +546,16 @@ class Repositorio:
     # ------------------------------------------------------------------
     # Importacion y respaldo
     # ------------------------------------------------------------------
-    def importar_alumnos(self, path, hoja, carrera):
+    def analizar_alumnos(self, path, hoja=None, carrera=""):
+        return self.importador.analizar_alumnos(path, hoja, carrera)
+
+    def importar_alumnos(self, path, hoja, carrera=""):
         return self.importador.importar_alumnos(path, hoja, carrera)
 
-    def importar_rotaciones(self, path, hoja, carrera, periodo=None):
+    def importar_rotaciones(self, path, hoja, carrera="", periodo=None):
         return self.importador.importar_rotaciones(path, hoja, carrera, periodo)
 
-    def importar_catalogo(self, path, hoja, carrera):
+    def importar_catalogo(self, path, hoja, carrera=""):
         return self.importador.importar_catalogo(path, hoja, carrera)
 
     def sugerir_periodo_archivo(self, path, hoja=None):

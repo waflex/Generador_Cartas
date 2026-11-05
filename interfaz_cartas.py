@@ -36,6 +36,63 @@ COLOR_SIDEBAR = "#0F172A"
 COLOR_SIDEBAR_TARJETA = "#1E293B"
 FUENTE = "Segoe UI"
 
+VISTAS_DATOS = ("Alumnos", "Carreras", "Centros clinicos", "Tutores", "Catalogo")
+COLUMNAS_DATOS = {
+    "Alumnos": (
+        ("rut", "RUT", 110),
+        ("nombre", "Nombre", 260),
+        ("correo", "Correo", 230),
+        ("carrera", "Carrera", 150),
+        ("area", "Area", 130),
+        ("tipo", "Tipo", 130),
+        ("asignaciones", "Asignaciones", 90),
+        ("periodos", "Periodos", 110),
+    ),
+    "Carreras": (
+        ("nombre", "Carrera", 240),
+        ("activa", "Activa", 70),
+        ("alumnos", "Alumnos", 80),
+        ("rotaciones", "Rotaciones", 85),
+        ("campos", "Campos", 75),
+        ("centros", "Centros", 75),
+        ("tutores", "Tutores", 75),
+        ("catalogo", "Registros", 80),
+    ),
+    "Centros clinicos": (
+        ("nombre", "Centro clinico", 230),
+        ("direccion", "Direccion", 260),
+        ("contacto", "Contacto", 200),
+        ("hora_ingreso", "Hora ingreso", 95),
+        ("carreras", "Carreras", 80),
+        ("carreras_nombres", "Carreras vinculadas", 220),
+        ("tutores", "Tutores", 75),
+        ("registros", "Registros", 80),
+    ),
+    "Tutores": (
+        ("nombre", "Tutor", 210),
+        ("correo", "Correo", 250),
+        ("correo_origen", "Origen", 110),
+        ("carreras", "Carreras", 80),
+        ("carreras_nombres", "Carreras vinculadas", 220),
+        ("centros", "Centros", 80),
+        ("campos", "Campos", 75),
+    ),
+    "Catalogo": (
+        ("carrera", "Carrera", 150),
+        ("campo", "Campo clinico", 200),
+        ("centro", "Centro clinico", 200),
+        ("tutor", "Tutor", 180),
+        ("correo_tutor", "Correo tutor", 230),
+        ("correo_tutor_origen", "Origen correo", 100),
+        ("contacto", "Contacto", 180),
+        ("direccion", "Direccion", 230),
+        ("hora_ingreso", "Hora", 80),
+        ("nombre_residencia", "Residencia", 160),
+        ("tipo_practica", "Tipo practica", 150),
+        ("area", "Area", 140),
+    ),
+}
+
 
 class Aplicacion:
     def __init__(self, root):
@@ -58,6 +115,17 @@ class Aplicacion:
         self.ventana_config = None
         self.ventana_dic = None
         self.ventana_bd = None
+        self.ventana_datos = None
+        self.arbol_datos = None
+        self.var_datos_vista = tk.StringVar(value="Alumnos")
+        self.var_datos_carrera = tk.StringVar(value="Todas")
+        self.var_datos_centro = tk.StringVar(value="Todos")
+        self.var_datos_busqueda = tk.StringVar()
+        self.lbl_datos_conteo = None
+        self.columnas_datos = []
+        self.filas_datos = []
+        self.mapa_centros_datos = {"Todos": None}
+        self.datos_after = None
         self.arbol_dic = None
         self.var_busqueda_dic = None
         self.lbl_dic_conteo = None
@@ -462,6 +530,10 @@ class Aplicacion:
             command=self._abrir_base_datos,
         ).pack(side="left", padx=(0, 8))
         ttk.Button(
+            acciones, text="Explorar datos", style="Small.TButton",
+            command=self._abrir_explorador_datos,
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
             acciones, text="Diccionario", style="Small.TButton",
             command=self._abrir_diccionario,
         ).pack(side="left", padx=(0, 8))
@@ -688,6 +760,7 @@ class Aplicacion:
         utilidades = tk.Frame(ventana, bg=COLOR_FONDO)
         utilidades.pack(fill="x", padx=20, pady=(0, 12))
         for indice, (texto, comando) in enumerate((
+            ("Explorar datos", self._abrir_explorador_datos),
             ("Respaldar BD", self._respaldar_bd),
             ("Exportar tablas", self._exportar_bd),
             ("Ver historial", self._historial_bd),
@@ -808,6 +881,39 @@ class Aplicacion:
                 return
             archivos[item] = (path, hoja)
 
+        if "alumnos" in archivos:
+            try:
+                analisis = self.repo.analizar_alumnos(
+                    *archivos["alumnos"], carrera
+                )
+            except Exception as e:
+                self._agregar_log(f"No se pudo analizar el listado de alumnos: {e}")
+                analisis = {"carreras": [], "origen": ""}
+            detectadas = analisis.get("carreras", [])
+            if len(detectadas) == 1:
+                detectada = detectadas[0]["nombre"]
+                if g.normalizar(detectada) != g.normalizar(carrera):
+                    usar = messagebox.askyesno(
+                        "Carrera detectada",
+                        "El listado de alumnos parece corresponder a:\n\n"
+                        f"{detectada}\n\n"
+                        f"La carrera seleccionada es: {carrera}\n\n"
+                        "¿Usar la carrera detectada?",
+                        parent=self.ventana_bd or self.root,
+                    )
+                    if usar:
+                        carrera = detectada
+                else:
+                    carrera = detectada
+            elif len(detectadas) > 1:
+                detalle = ", ".join(
+                    f"{item['nombre']} ({item['alumnos']})"
+                    for item in detectadas
+                )
+                self._agregar_log(
+                    f"Alumnos con varias carreras detectadas: {detalle}"
+                )
+
         periodo = None
         if "rotaciones" in archivos:
             periodo = self._periodo_para_importar(*archivos["rotaciones"])
@@ -823,6 +929,10 @@ class Aplicacion:
         self.root.config(cursor="watch")
         self.root.update_idletasks()
         try:
+            if "catalogo" in archivos:
+                resultados.append(
+                    self.repo.importar_catalogo(*archivos["catalogo"], carrera)
+                )
             if "alumnos" in archivos:
                 resultados.append(
                     self.repo.importar_alumnos(*archivos["alumnos"], carrera)
@@ -832,10 +942,6 @@ class Aplicacion:
                     self.repo.importar_rotaciones(
                         *archivos["rotaciones"], carrera, periodo
                     )
-                )
-            if "catalogo" in archivos:
-                resultados.append(
-                    self.repo.importar_catalogo(*archivos["catalogo"], carrera)
                 )
         except Exception as e:
             self._agregar_log(f"ERROR importando a la base de datos: {e}")
@@ -847,13 +953,23 @@ class Aplicacion:
         self._refrescar_bd()
         self._recargar_rotaciones()
         self._actualizar_resumen()
+        self._refrescar_datos_si_abierto()
         lineas = []
+        carreras_resultado = set()
         for item in resultados:
             lineas.append(
                 f"{item['tipo']}: {item['filas']} filas, "
                 f"{item['insertados']} nuevos, {item['actualizados']} actualizados, "
                 f"{item['errores']} errores"
             )
+            for carrera_item in item.get("carreras", []):
+                nombre = carrera_item["nombre"]
+                carreras_resultado.add(nombre)
+                lineas.append(
+                    f"  {nombre}: {carrera_item.get('filas', 0)} filas"
+                )
+        if len(carreras_resultado) == 1:
+            self.var_carrera.set(next(iter(carreras_resultado)))
         self._agregar_log("Importacion a base de datos terminada:")
         for linea in lineas:
             self._agregar_log("  " + linea)
@@ -919,6 +1035,322 @@ class Aplicacion:
                 f"err={fila['errores']}  {fila.get('archivo', '')}\n",
             )
         texto.config(state="disabled")
+
+    # ------------------------------------------------------------------
+    # EXPLORADOR DE DATOS
+    # ------------------------------------------------------------------
+    def _abrir_explorador_datos(self):
+        if self.repo is None:
+            messagebox.showerror(
+                "Base de datos no disponible",
+                self.repo_error or "No se pudo abrir la base de datos.",
+            )
+            return
+        if self.ventana_datos is not None and self.ventana_datos.winfo_exists():
+            self._refrescar_opciones_datos()
+            self._refrescar_datos()
+            self.ventana_datos.deiconify()
+            self.ventana_datos.lift()
+            self.ventana_datos.focus_force()
+            return
+
+        ventana = tk.Toplevel(self.root)
+        ventana.title("Explorador de datos")
+        ventana.geometry("1120x700")
+        ventana.minsize(980, 560)
+        ventana.configure(bg=COLOR_FONDO)
+        ventana.transient(self.root)
+        ventana.protocol("WM_DELETE_WINDOW", self._cerrar_explorador_datos)
+        self.ventana_datos = ventana
+
+        cabecera = tk.Frame(ventana, bg=COLOR_FONDO)
+        cabecera.pack(fill="x", padx=20, pady=(18, 8))
+        tk.Label(
+            cabecera, text="Explorador de datos", bg=COLOR_FONDO,
+            fg=COLOR_TEXTO, font=(FUENTE, 16, "bold"),
+        ).pack(side="left")
+        ttk.Button(
+            cabecera, text="Cerrar", style="Small.TButton",
+            command=self._cerrar_explorador_datos,
+        ).pack(side="right")
+
+        filtros = tk.Frame(
+            ventana, bg=COLOR_TARJETA, highlightbackground=COLOR_BORDE,
+            highlightthickness=1,
+        )
+        filtros.pack(fill="x", padx=20, pady=(0, 12))
+        filtros.columnconfigure(5, weight=1)
+
+        tk.Label(
+            filtros, text="Vista", bg=COLOR_TARJETA, fg=COLOR_TEXTO,
+            font=(FUENTE, 9, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=(14, 6), pady=(12, 6))
+        combo_vista = ttk.Combobox(
+            filtros, textvariable=self.var_datos_vista,
+            values=VISTAS_DATOS, state="readonly", width=18,
+        )
+        combo_vista.grid(row=0, column=1, sticky="w", padx=(0, 16), pady=(12, 6))
+        combo_vista.bind("<<ComboboxSelected>>", lambda _e: self._refrescar_datos())
+
+        tk.Label(
+            filtros, text="Carrera", bg=COLOR_TARJETA, fg=COLOR_TEXTO,
+            font=(FUENTE, 9, "bold"),
+        ).grid(row=0, column=2, sticky="w", padx=(0, 6), pady=(12, 6))
+        self.combo_datos_carrera = ttk.Combobox(
+            filtros, textvariable=self.var_datos_carrera,
+            state="readonly", width=20,
+        )
+        self.combo_datos_carrera.grid(
+            row=0, column=3, sticky="w", padx=(0, 16), pady=(12, 6)
+        )
+        self.combo_datos_carrera.bind(
+            "<<ComboboxSelected>>", self._cambiar_carrera_datos
+        )
+
+        tk.Label(
+            filtros, text="Centro clinico", bg=COLOR_TARJETA, fg=COLOR_TEXTO,
+            font=(FUENTE, 9, "bold"),
+        ).grid(row=0, column=4, sticky="w", padx=(0, 6), pady=(12, 6))
+        self.combo_datos_centro = ttk.Combobox(
+            filtros, textvariable=self.var_datos_centro,
+            state="readonly", width=26,
+        )
+        self.combo_datos_centro.grid(
+            row=0, column=5, sticky="w", padx=(0, 16), pady=(12, 6)
+        )
+        self.combo_datos_centro.bind(
+            "<<ComboboxSelected>>", lambda _e: self._refrescar_datos()
+        )
+        self.lbl_datos_conteo = tk.Label(
+            filtros, text="", bg=COLOR_TARJETA, fg=COLOR_TEXTO_SUAVE,
+            font=(FUENTE, 9, "bold"),
+        )
+        self.lbl_datos_conteo.grid(
+            row=0, column=6, sticky="e", padx=(0, 14), pady=(12, 6)
+        )
+
+        tk.Label(
+            filtros, text="Buscar", bg=COLOR_TARJETA, fg=COLOR_TEXTO,
+            font=(FUENTE, 9, "bold"),
+        ).grid(row=1, column=0, sticky="w", padx=(14, 6), pady=(0, 12))
+        entrada = ttk.Entry(filtros, textvariable=self.var_datos_busqueda)
+        entrada.grid(
+            row=1, column=1, columnspan=5, sticky="ew", padx=(0, 10),
+            pady=(0, 12),
+        )
+        entrada.bind("<KeyRelease>", self._programar_filtro_datos)
+        ttk.Button(
+            filtros, text="Limpiar", style="Small.TButton",
+            command=self._limpiar_filtros_datos,
+        ).grid(row=1, column=6, sticky="e", padx=(0, 14), pady=(0, 12))
+
+        cuerpo = tk.Frame(ventana, bg=COLOR_FONDO)
+        cuerpo.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+        cuerpo.columnconfigure(0, weight=1)
+        cuerpo.rowconfigure(0, weight=1)
+
+        self.arbol_datos = ttk.Treeview(
+            cuerpo, show="headings", selectmode="browse"
+        )
+        self.arbol_datos.grid(row=0, column=0, sticky="nsew")
+        barra_v = ttk.Scrollbar(
+            cuerpo, orient="vertical", command=self.arbol_datos.yview
+        )
+        barra_v.grid(row=0, column=1, sticky="ns")
+        barra_h = ttk.Scrollbar(
+            cuerpo, orient="horizontal", command=self.arbol_datos.xview
+        )
+        barra_h.grid(row=1, column=0, sticky="ew")
+        self.arbol_datos.configure(
+            yscrollcommand=barra_v.set, xscrollcommand=barra_h.set
+        )
+
+        pie = tk.Frame(ventana, bg=COLOR_FONDO)
+        pie.pack(fill="x", padx=20, pady=(0, 14))
+        ttk.Button(
+            pie, text="Exportar vista", style="Accent.TButton",
+            command=self._exportar_datos,
+        ).pack(side="right")
+        self._tip(
+            pie,
+            "Los filtros se aplican a todas las vistas. Los alumnos se "
+            "relacionan con un centro mediante su campo clinico en el catalogo.",
+            wraplength=760,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        self._refrescar_opciones_datos()
+        self._refrescar_datos()
+
+    def _cerrar_explorador_datos(self):
+        if self.datos_after is not None:
+            try:
+                self.root.after_cancel(self.datos_after)
+            except Exception:
+                pass
+            self.datos_after = None
+        if self.ventana_datos is not None and self.ventana_datos.winfo_exists():
+            self.ventana_datos.destroy()
+        self.ventana_datos = None
+        self.arbol_datos = None
+        self.lbl_datos_conteo = None
+        self.columnas_datos = []
+        self.filas_datos = []
+
+    def _cambiar_carrera_datos(self, _evento=None):
+        self._refrescar_opciones_datos()
+        self._refrescar_datos()
+
+    def _refrescar_opciones_datos(self):
+        if self.ventana_datos is None or not self.ventana_datos.winfo_exists():
+            return
+        try:
+            carreras = [
+                fila["nombre"] for fila in self.repo.listar_carreras()
+            ]
+        except Exception as e:
+            self._agregar_log(f"No se pudieron leer las carreras: {e}")
+            carreras = []
+        valores = ["Todas"] + carreras
+        self.combo_datos_carrera["values"] = valores
+        if self.var_datos_carrera.get() not in valores:
+            self.var_datos_carrera.set("Todas")
+
+        carrera = (
+            "" if self.var_datos_carrera.get() == "Todas"
+            else self.var_datos_carrera.get()
+        )
+        try:
+            centros = self.repo.listar_centros(carrera)
+        except Exception as e:
+            self._agregar_log(f"No se pudieron leer los centros: {e}")
+            centros = []
+        mapa = {"Todos": None}
+        for centro in centros:
+            display = centro["nombre"]
+            if display in mapa:
+                display = f"{display} - {centro['direccion']}"
+            base = display
+            numero = 2
+            while display in mapa:
+                display = f"{base} #{numero}"
+                numero += 1
+            mapa[display] = centro["id"]
+        try:
+            sin_centro = bool(self.repo.listar_alumnos(carrera, -1)) or bool(
+                self.repo.listar_catalogo(carrera, -1)
+            )
+        except Exception:
+            sin_centro = False
+        if sin_centro:
+            mapa["Sin centro (campo no catalogado)"] = -1
+        self.mapa_centros_datos = mapa
+        valores_centro = list(mapa)
+        self.combo_datos_centro["values"] = valores_centro
+        if self.var_datos_centro.get() not in valores_centro:
+            self.var_datos_centro.set("Todos")
+
+    def _programar_filtro_datos(self, _evento=None):
+        if self.datos_after is not None:
+            try:
+                self.root.after_cancel(self.datos_after)
+            except Exception:
+                pass
+        self.datos_after = self.root.after(250, self._refrescar_datos)
+
+    def _limpiar_filtros_datos(self):
+        self.var_datos_carrera.set("Todas")
+        self.var_datos_centro.set("Todos")
+        self.var_datos_busqueda.set("")
+        self._refrescar_opciones_datos()
+        self._refrescar_datos()
+
+    def _valor_dato(self, fila, clave):
+        valor = fila.get(clave, "")
+        if clave == "activa":
+            return "Si" if valor else "No"
+        return "" if valor is None else valor
+
+    def _refrescar_datos(self):
+        if self.arbol_datos is None or not self.arbol_datos.winfo_exists():
+            return
+        self.datos_after = None
+        vista = self.var_datos_vista.get()
+        carrera = (
+            "" if self.var_datos_carrera.get() == "Todas"
+            else self.var_datos_carrera.get()
+        )
+        centro_id = self.mapa_centros_datos.get(self.var_datos_centro.get())
+        texto = self.var_datos_busqueda.get().strip()
+        try:
+            if vista == "Alumnos":
+                filas = self.repo.listar_alumnos(carrera, centro_id, texto)
+            elif vista == "Carreras":
+                filas = self.repo.listar_carreras(centro_id, texto)
+            elif vista == "Centros clinicos":
+                filas = self.repo.listar_centros(carrera, centro_id, texto)
+            elif vista == "Tutores":
+                filas = self.repo.listar_tutores(carrera, centro_id, texto)
+            else:
+                filas = self.repo.listar_catalogo(carrera, centro_id, texto)
+        except Exception as e:
+            self._agregar_log(f"No se pudo consultar el explorador: {e}")
+            messagebox.showerror("No se pudo consultar", str(e))
+            return
+
+        if vista == "Carreras" and carrera:
+            objetivo = g.normalizar(carrera)
+            filas = [
+                fila for fila in filas
+                if g.normalizar(fila.get("nombre", "")) == objetivo
+            ]
+
+        columnas = COLUMNAS_DATOS[vista]
+        self.columnas_datos = columnas
+        self.filas_datos = filas
+        claves = [clave for clave, _titulo, _ancho in columnas]
+        self.arbol_datos["columns"] = claves
+        for clave, titulo, ancho in columnas:
+            self.arbol_datos.heading(clave, text=titulo, anchor="w")
+            self.arbol_datos.column(
+                clave, width=ancho, minwidth=60, stretch=True, anchor="w"
+            )
+        self.arbol_datos.delete(*self.arbol_datos.get_children())
+        for fila in filas:
+            self.arbol_datos.insert(
+                "", "end",
+                values=[self._valor_dato(fila, clave) for clave in claves],
+            )
+        if self.lbl_datos_conteo is not None:
+            self.lbl_datos_conteo.config(text=f"{len(filas)} resultados")
+
+    def _refrescar_datos_si_abierto(self):
+        if self.ventana_datos is not None and self.ventana_datos.winfo_exists():
+            self._refrescar_opciones_datos()
+            self._refrescar_datos()
+
+    def _exportar_datos(self):
+        if not self.filas_datos:
+            messagebox.showwarning(
+                "Sin datos", "La vista actual no tiene resultados para exportar."
+            )
+            return
+        vista = self.var_datos_vista.get()
+        destino = filedialog.asksaveasfilename(
+            title="Exportar vista",
+            initialfile=f"Datos_{g.safe_filename(vista)}.xlsx",
+            defaultextension=".xlsx",
+            filetypes=[("Archivo Excel", "*.xlsx")],
+        )
+        if not destino:
+            return
+        try:
+            ruta = self.repo.exportar_vista(
+                destino, self.columnas_datos, self.filas_datos
+            )
+        except Exception as e:
+            messagebox.showerror("No se pudo exportar", str(e))
+            return
+        messagebox.showinfo("Vista exportada", str(ruta))
 
     def _abrir_diccionario(self):
         if self.ventana_dic is not None and self.ventana_dic.winfo_exists():

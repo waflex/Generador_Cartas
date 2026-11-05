@@ -136,6 +136,76 @@ class RepositorioTest(unittest.TestCase):
         self.repo.exportar_excel(destino)
         self.assertTrue(destino.exists())
 
+    def test_carreras_detectadas(self):
+        catalogo = self.repo.importar_catalogo(CATALOGO, None, "KINESIOLOGIA")
+        self.assertEqual(len(catalogo["carreras"]), 4)
+        carreras = self.repo.listar_carreras()
+        nombres = {g.normalizar(fila["nombre"]) for fila in carreras}
+        self.assertEqual(
+            nombres,
+            {
+                g.normalizar("Kinesiología"),
+                g.normalizar("Enfermería"),
+                g.normalizar("Fonoaudiología"),
+                g.normalizar("Terapia Ocupacional"),
+            },
+        )
+        total_catalogo = sum(fila["catalogo"] for fila in carreras)
+        self.assertEqual(total_catalogo, 7)
+
+        analisis = self.repo.analizar_alumnos(LISTA, None, "KINESIOLOGIA")
+        self.assertEqual(len(analisis["carreras"]), 1)
+        self.assertEqual(
+            g.normalizar(analisis["carreras"][0]["nombre"]),
+            g.normalizar("Kinesiología"),
+        )
+
+        self.repo.importar_alumnos(LISTA, None, "KINESIOLOGIA")
+        alumnos = self.repo.listar_alumnos()
+        self.assertTrue(alumnos)
+        self.assertEqual(
+            {g.normalizar(fila["carrera"]) for fila in alumnos},
+            {g.normalizar("Kinesiología")},
+        )
+
+    def test_explorador_filtros(self):
+        self.repo.importar_catalogo(CATALOGO, None, "KINESIOLOGIA")
+        self.repo.importar_alumnos(LISTA, None, "KINESIOLOGIA")
+        self.repo.importar_rotaciones(GRILLA, None, "KINESIOLOGIA", "2026-S2")
+
+        centros = self.repo.listar_centros()
+        self.assertTrue(centros)
+        centro = centros[0]
+        alumnos_centro = self.repo.listar_alumnos("", centro["id"])
+        self.assertIsInstance(alumnos_centro, list)
+
+        alumnos_sin_centro = self.repo.listar_alumnos("", -1)
+        self.assertGreater(len(alumnos_sin_centro), 0)
+        self.assertLessEqual(len(alumnos_sin_centro), len(self.repo.listar_alumnos()))
+        self.assertEqual(self.repo.listar_centros("", -1), [])
+
+        tutores = self.repo.listar_tutores("Kinesiología", centro["id"])
+        self.assertIsInstance(tutores, list)
+
+        catalogo = self.repo.listar_catalogo("Kinesiología")
+        self.assertTrue(catalogo)
+        self.assertTrue(
+            all(
+                g.normalizar(fila["carrera"]) == g.normalizar("Kinesiología")
+                for fila in catalogo
+            )
+        )
+
+        columnas = (
+            ("carrera", "Carrera", 150),
+            ("campo", "Campo clinico", 200),
+            ("centro", "Centro clinico", 200),
+            ("tutor", "Tutor", 180),
+        )
+        destino = Path(self.temp.name) / "vista.xlsx"
+        self.repo.exportar_vista(destino, columnas, catalogo)
+        self.assertTrue(destino.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

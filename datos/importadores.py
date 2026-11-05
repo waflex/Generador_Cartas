@@ -35,6 +35,20 @@ def _hash_archivo(path):
     return h.hexdigest()
 
 
+def _carrera_desde_archivo(path, hoja, conocidas):
+    """Busca una carrera conocida en el nombre del archivo o de la hoja."""
+    texto = _norm(f"{Path(path).stem} {_texto(hoja)}")
+    candidatos = []
+    for nombre in conocidas:
+        normal = _norm(nombre)
+        if normal and normal in texto:
+            candidatos.append((len(normal), nombre))
+    if not candidatos:
+        return ""
+    candidatos.sort(reverse=True)
+    return candidatos[0][1]
+
+
 class Importador:
     def __init__(self, con):
         self.con = con
@@ -46,9 +60,15 @@ class Importador:
         nombre = _texto(nombre) or "SIN CARRERA"
         nombre_norm = _norm(nombre)
         fila = self.con.execute(
-            "SELECT id FROM carreras WHERE nombre_norm = ?", (nombre_norm,)
+            "SELECT id, nombre FROM carreras WHERE nombre_norm = ?", (nombre_norm,)
         ).fetchone()
         if fila:
+            actual = _texto(fila["nombre"])
+            if actual.isupper() and not nombre.isupper():
+                self.con.execute(
+                    "UPDATE carreras SET nombre = ? WHERE id = ?",
+                    (nombre, fila["id"]),
+                )
             return fila["id"]
         cur = self.con.execute(
             "INSERT INTO carreras(nombre, nombre_norm) VALUES (?, ?)",
@@ -317,18 +337,89 @@ class Importador:
     # ------------------------------------------------------------------
     # Importaciones
     # ------------------------------------------------------------------
-    def importar_alumnos(self, path, hoja, carrera):
+    def _carreras_conocidas(self):
+        filas = self.con.execute(
+            "SELECT nombre FROM carreras ORDER BY nombre"
+        ).fetchall()
+        valores = [_texto(fila["nombre"]) for fila in filas]
+        if _norm(g.CARRERA) not in {_norm(valor) for valor in valores}:
+            valores.append(g.CARRERA)
+        return valores
+
+    def _carrera_respaldo(self, path, hoja, carrera):
+        return (
+            _texto(carrera)
+            or _carrera_desde_archivo(path, hoja, self._carreras_conocidas())
+        )
+
+    def analizar_alumnos(self, path, hoja=None, carrera=""):
+        """Resume las carreras detectadas en un listado de alumnos."""
         path = Path(path)
-        carrera_id = self._carrera(carrera)
+        alumnos = g.cargar_alumnos(path, hoja)
+        detectada = _carrera_desde_archivo(
+            path, hoja, self._carreras_conocidas()
+        )
+        respaldo = detectada or _texto(carrera)
+        conteo = {}
+        con_columna = False
+        for alumno in alumnos:
+            nombre = _texto(alumno.get("carrera"))
+            if nombre:
+                con_columna = True
+            else:
+                nombre = respaldo
+            if not nombre:
+                continue
+            clave = _norm(nombre)
+            item = conteo.setdefault(clave, {"nombre": nombre, "alumnos": 0})
+            item["alumnos"] += 1
+        origen = "columna" if con_columna else (
+            "archivo" if detectada else ("seleccion" if carrera else "")
+        )
+        return {
+            "total": len(alumnos),
+            "origen": origen or "sin_detectar",
+            "carreras": [
+                item for item in sorted(
+                    conteo.values(), key=lambda valor: valor["nombre"]
+                )
+            ],
+        }
+
+    def importar_alumnos(self, path, hoja, carrera=""):
+        path = Path(path)
+        alumnos = g.cargar_alumnos(path, hoja)
+        if not alumnos:
+            raise ValueError("No se encontraron alumnos en la hoja seleccionada.")
+
+        detectada = _carrera_desde_archivo(
+            path, hoja, self._carreras_conocidas()
+        )
+        respaldo = detectada or _texto(carrera) or "SIN CARRERA"
+        grupos = {}
+        for alumno in alumnos:
+            nombre_carrera = _texto(alumno.get("carrera")) or respaldo
+            clave = _norm(nombre_carrera)
+            item = grupos.setdefault(
+                clave, {"nombre": nombre_carrera, "filas": 0}
+            )
+            item["filas"] += 1
+
+        carrera_unica = (
+            next(iter(grupos.values()))["nombre"] if len(grupos) == 1 else ""
+        )
+        carrera_id = self._carrera(carrera_unica) if carrera_unica else None
         imp_id = self._iniciar("alumnos", path, hoja, carrera_id)
         insertados = actualizados = 0
         filas = 0
         try:
-            maestro = g.cargar_maestro(path, hoja)
             with self.con:
-                for alumno in maestro.values():
+                for alumno in alumnos:
+                    nombre_carrera = _texto(alumno.get("carrera")) or respaldo
+                    nombre_carrera = grupos[_norm(nombre_carrera)]["nombre"]
+                    alumno_carrera_id = self._carrera(nombre_carrera)
                     _, nuevo = self._upsert_alumno(
-                        carrera_id,
+                        alumno_carrera_id,
                         alumno.get("nombre_original", ""),
                         alumno.get("rut_fmt", ""),
                         alumno.get("correo", ""),
@@ -350,6 +441,12 @@ class Importador:
                 "omitidos": 0,
                 "errores": 0,
                 "estado": estado,
+                "carreras": [
+                    {"nombre": item["nombre"], "filas": item["filas"]}
+                    for item in sorted(
+                        grupos.values(), key=lambda valor: valor["nombre"]
+                    )
+                ],
             }
         except Exception as exc:
             self._finalizar(imp_id, filas, insertados, actualizados, 0, 1, str(exc))
@@ -365,8 +462,9 @@ class Importador:
                 )
         return sugerir_periodo("", "")
 
-    def importar_rotaciones(self, path, hoja, carrera, periodo=None):
+    def importar_rotaciones(self, path, hoja, carrera="", periodo=None):
         path = Path(path)
+        carrera = self._carrera_respaldo(path, hoja, carrera) or "SIN CARRERA"
         carrera_id = self._carrera(carrera)
         grilla = g.parsear_grilla(path, hoja)
         if not grilla:
@@ -543,27 +641,48 @@ class Importador:
             )
             raise
 
-    def importar_catalogo(self, path, hoja, carrera):
+    def importar_catalogo(self, path, hoja, carrera=""):
         path = Path(path)
-        carrera_id = self._carrera(carrera)
         registros = ct.leer_catalogo(path, hoja)
         if not registros:
             raise ValueError("No se encontraron tutores en el catalogo.")
 
+        respaldo = (
+            _texto(carrera)
+            or _carrera_desde_archivo(path, hoja, self._carreras_conocidas())
+            or "SIN CARRERA"
+        )
+        grupos = {}
+        for reg in registros:
+            nombre_carrera = _texto(reg.get("carrera")) or respaldo
+            clave = _norm(nombre_carrera)
+            item = grupos.setdefault(
+                clave, {"nombre": nombre_carrera, "filas": 0}
+            )
+            item["filas"] += 1
+
+        carrera_unica = (
+            next(iter(grupos.values()))["nombre"] if len(grupos) == 1 else ""
+        )
+        carrera_id = self._carrera(carrera_unica) if carrera_unica else None
         imp_id = self._iniciar("catalogo", path, hoja, carrera_id)
         insertados = actualizados = 0
         filas = 0
         try:
-            carrera_norm = _norm(carrera)
             with self.con:
-                self.con.execute(
-                    "DELETE FROM catalogo_registros WHERE carrera_norm = ?",
-                    (carrera_norm,),
-                )
+                for item in grupos.values():
+                    self.con.execute(
+                        "DELETE FROM catalogo_registros WHERE carrera_norm = ?",
+                        (_norm(item["nombre"]),),
+                    )
                 for reg in registros:
                     filas += 1
+                    nombre_carrera = _texto(reg.get("carrera")) or respaldo
+                    clave_carrera = _norm(nombre_carrera)
+                    nombre_carrera = grupos[clave_carrera]["nombre"]
+                    fila_carrera_id = self._carrera(nombre_carrera)
                     campo = reg.get("campo", "")
-                    campo_id, nuevo_campo = self._campo(carrera_id, campo)
+                    campo_id, nuevo_campo = self._campo(fila_carrera_id, campo)
                     centro_id, nuevo_centro = self._centro(
                         reg.get("nombre_residencia") or reg.get("campo_corto") or campo,
                         reg.get("direccion", ""),
@@ -600,7 +719,7 @@ class Importador:
                                   ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            imp_id, carrera, carrera_norm, reg.get("fila"),
+                            imp_id, nombre_carrera, clave_carrera, reg.get("fila"),
                             reg.get("tipo_practica", ""), reg.get("area", ""),
                             campo, reg.get("campo_norm", ""),
                             reg.get("campo_corto", ""),
@@ -631,6 +750,12 @@ class Importador:
                 "omitidos": 0,
                 "errores": 0,
                 "estado": estado,
+                "carreras": [
+                    {"nombre": item["nombre"], "filas": item["filas"]}
+                    for item in sorted(
+                        grupos.values(), key=lambda valor: valor["nombre"]
+                    )
+                ],
             }
         except Exception as exc:
             self._finalizar(imp_id, filas, insertados, actualizados, 0, 1, str(exc))
